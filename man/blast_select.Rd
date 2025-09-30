@@ -49,7 +49,7 @@ The first entry \code{n0} is the target size; the rest are auxiliary-study sizes
 
 \item{alpha}{Credible-interval level (e.g., \code{0.05} for 95\% CIs).}
 
-\item{iterEBstep}{Number of empirical Bayes EM steps; if \code{0}, empirical Bayes is disabled.}
+\item{iterEBstep}{Number of empirical Bayes EM steps to estimate global shrinkage scale parameter; if \code{0}, empirical Bayes is disabled.}
 
 \item{sir}{Whether to use SIR within the empirical Bayes routine.}
 

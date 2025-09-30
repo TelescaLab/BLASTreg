@@ -26,7 +26,7 @@
 #' @param sigma2 Error variance (used for initialization).
 #' @param w Inverse-Gamma prior shape parameter used in horseshoe updates.
 #' @param alpha Credible-interval level (e.g., `0.05` for 95% CIs).
-#' @param iterEBstep Number of empirical Bayes EM steps; if `0`, empirical Bayes is disabled.
+#' @param iterEBstep Number of empirical Bayes EM steps to estimate global shrinkage scale parameter; if `0`, empirical Bayes is disabled.
 #' @param sir Whether to use SIR within the empirical Bayes routine.
 #' @param gamma_init Optional binary vector of length `K` giving the initial
 #'   informative-set indicator; if `NULL`, a candidate set is chosen via
