@@ -18,8 +18,8 @@ blast_oracle(
   w = 1,
   alpha = 0.05,
   iterEBstep = 0,
-  sir = TRUE,
-  progress_every = 100
+  enforce_delta_stronger_shrinkage = FALSE,
+  progress_every = 0
 )
 }
 \arguments{
@@ -43,9 +43,11 @@ blast_oracle(
 
 \item{iterEBstep}{Integer EB iterations (0 disables EB).}
 
-\item{sir}{Logical; passed to EB helper.}
+\item{enforce_delta_stronger_shrinkage}{Logical; if TRUE, during the delta
+update the proposal for \code{log(xi_delta)} is truncated below at \code{log(xi_wk)},
+ensuring \code{xi_delta >= xi_wk} and thus stronger/equal shrinkage on contrasts.}
 
-\item{progress_every}{Print progress every this many iters (0 = silent).}
+\item{progress_every}{Integer; print progress every this many iters (0=off).}
 }
 \value{
 List with posterior summaries and samples.

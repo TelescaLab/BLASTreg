@@ -14,8 +14,11 @@
 #' @param sigma2 Error variance (Gaussian).
 #' @param alpha Credible interval level.
 #' @param iterEBstep Integer EB iterations (0 disables EB).
-#' @param sir Logical; passed to EB helper.
-#' @param progress_every Print progress every this many iters (0 = silent).
+#' @param enforce_delta_stronger_shrinkage Logical; if TRUE, during the delta
+#'   update the proposal for `log(xi_delta)` is truncated below at `log(xi_wk)`,
+#'   ensuring `xi_delta >= xi_wk` and thus stronger/equal shrinkage on contrasts.
+#' @param progress_every Integer; print progress every this many iters (0=off).
+#'
 #'
 #'
 #'
@@ -58,22 +61,23 @@
 #'
 #' @export
 blast_oracle <- function(
-    X, y, n.vec,
-    burn = 1000, iter = 5000,
-    a = 1/5, b = 10, s = 0.8,
-    tau = 1, sigma2 = 1, w = 1,
-    alpha = 0.05, iterEBstep = 0, sir = TRUE,
-    progress_every = 100
+  X, y, n.vec,
+  burn = 1000, iter = 5000,
+  a = 1/5, b = 10, s = 0.8,
+  tau = 1, sigma2 = 1, w = 1,
+  alpha = 0.05, iterEBstep = 0,
+  enforce_delta_stronger_shrinkage = FALSE,
+  progress_every = 0
 ){
-  # Basic sizes & splits
+  ## --- Dimensions and splits
   p  <- ncol(X)
   N  <- sum(n.vec)
   n0 <- n.vec[1]
   if (n0 <= 0) stop("n.vec[1] (target size) must be > 0.")
+
   X0 <- X[seq_len(n0), , drop = FALSE]
   y0 <- y[seq_len(n0)]
 
-  # Source (informative) block
   N_k <- if (length(n.vec) > 1) sum(n.vec[-1]) else 0
   has_sources <- N_k > 0
   if (has_sources) {
@@ -84,27 +88,26 @@ blast_oracle <- function(
     yA <- numeric(0)
   }
 
-  # Horseshoe / shrinkage initial values
-  eta_0    <- rep(1, p)   # local scale^(-2)
-  xi_0     <- tau^(-2)    # global scale^(-2)
+  ## --- Horseshoe states
+  # Target (delta)
+  eta_0    <- rep(1, p)
+  xi_0     <- tau^(-2)
   sigma2_0 <- sigma2
   kappa_0  <- -0.5
   delta_new <- rep(0, p)
 
+  # Shared/source (wk)
   eta_k    <- rep(1, p)
   xi_k     <- tau^(-2)
   sigma2_k <- sigma2
   kappa_k  <- -0.5
 
-  EB  <- iterEBstep != 0
+  ## --- Precomputations
+  Q0 <- crossprod(X0)
+  Q  <- crossprod(X)
+
+  ## --- Storage
   nmc <- burn + iterEBstep + iter
-
-  # Precompute crossproducts
-  Q0_gauss <- crossprod(X0)
-  Qk_gauss <- if (has_sources) crossprod(XA) else NULL
-  Q_gauss  <- crossprod(X)
-
-  # Storage
   betaout     <- matrix(0, nrow = nmc, ncol = p)
   wk_out      <- matrix(0, nrow = nmc, ncol = p)
   etaout      <- matrix(0, nrow = nmc, ncol = p)
@@ -116,72 +119,79 @@ blast_oracle <- function(
   kappa_0out  <- numeric(nmc)
   kappa_kout  <- numeric(nmc)
 
-  eb_counter <- 0
-  sigma2_0_eb_est <- NULL
-  sigma2_k_eb_est <- NULL
+  EB <- iterEBstep != 0
 
-  ## ---------- TARGET-ONLY SHORT-CIRCUIT ----------
+  ## --- Target-only short-circuit
   if (!has_sources) {
-    message("BLAST (Oracle, Gaussian): No source studies provided. Proceeding with target-only regression.")
-
+    message("BLAST (Oracle, Gaussian): No source studies provided. Target-only regression.")
     for (i in seq_len(nmc)) {
       samp <- exact_horseshoe_gibbs_step(
-        X = X0, y = y0, eta = eta_0, xi = xi_0, Q = Q0_gauss,
-        w = w, s = s, p = p, a = a, b = b,
-        sigma2 = sigma2_0, kappa = kappa_0, EB = EB
+        X = X0, y = y0,
+        eta = eta_0, xi = xi_0, Q = Q,
+        w = w, s = s, a = a, b = b, p = p,
+        sigma2 = sigma2_0, kappa = kappa_0, EB = EB,
+        truncated_global_update = FALSE
       )
-
       beta_new <- samp$new_beta
       eta_0    <- samp$new_eta
       xi_0     <- samp$new_xi
       sigma2_0 <- samp$new_sigma2
 
-      # Save
-      betaout[i, ] <- beta_new
-      etaout[i, ]  <- eta_0
-      xi_0out[i]   <- xi_0
+      betaout[i, ]   <- beta_new
+      etaout[i, ]    <- eta_0
+      xi_0out[i]     <- xi_0
       sigma2_0out[i] <- sigma2_0
-      kappa_0out[i] <- kappa_0
+      kappa_0out[i]  <- kappa_0
 
       if (progress_every > 0 && i %% progress_every == 0) {
         message(sprintf("Iteration: %d", i))
       }
     }
 
-    burn_all <- burn + iterEBstep
-    keep     <- seq.int(burn_all + 1L, nmc)
-    beta_s   <- betaout[keep, , drop = FALSE]
-
-    res <- list(
+    keep <- seq.int(burn + iterEBstep + 1L, nmc)
+    beta_s <- betaout[keep, , drop = FALSE]
+    return(list(
       BetaHat = colMeans(beta_s),
-      LeftCI  = apply(beta_s, 2, stats::quantile, probs = alpha/2),
+      BetaHatMedian = apply(beta_s, 2, median),
+      LeftCI = apply(beta_s, 2, stats::quantile, probs = alpha/2),
       RightCI = apply(beta_s, 2, stats::quantile, probs = 1 - alpha/2),
-      BetaSamples = beta_s
-    )
-    return(res)
+      Sigma2Hat = mean(sigma2_0out[keep]),
+      LambdaHat = colMeans(1/sqrt(etaout[keep, , drop = FALSE])),
+      TauHat    = mean(1/sqrt(xi_0out[keep])),
+      BetaSamples   = beta_s,
+      LambdaSamples = 1/sqrt(etaout[keep, , drop = FALSE]),
+      TauSamples    = 1/sqrt(xi_0out[keep]),
+      Sigma2Samples = sigma2_0out[keep],
+      kappa_0 = kappa_0out[keep]
+    ))
   }
 
-  ## ---------- MAIN LOOP (TARGET + SOURCES) ----------
+  ## --- Main loop (target + sources)
   for (i in seq_len(nmc)) {
-    # --- Auxiliary/shared coefficients w_k update ---
+
+    ## (1) Shared/source coefficients wk | delta
+    y_new <- c(y0 - drop(X0 %*% delta_new), yA)
     wk_samp <- exact_horseshoe_gibbs_step(
-      X = X, y = c(y0 - drop(X0 %*% delta_new), yA),
-      eta = eta_k, xi = xi_k, Q = Q_gauss,
-      w = w, s = s, p = p, a = a, b = b,
+      X = X, y = y_new,
+      eta = eta_k, xi = xi_k, Q = Q,
+      w = w, s = s, a = a, b = b, p = p,
       sigma2 = sigma2_k, kappa = kappa_k, EB = EB,
-      sigma2_0 = sigma2_0, N_k = N_k
+      truncated_global_update = FALSE
     )
-    wk_new  <- wk_samp$new_beta
-    eta_k   <- wk_samp$new_eta
-    xi_k    <- wk_samp$new_xi
+    wk_new   <- wk_samp$new_beta
+    eta_k    <- wk_samp$new_eta
+    xi_k     <- wk_samp$new_xi
     sigma2_k <- wk_samp$new_sigma2
 
-    # --- Target delta update ---
+    ## (2) Target delta | wk_new
+    # If enforcing stronger shrinkage on contrasts: truncate log-proposal at log(xi_k)
     delta_samp <- exact_horseshoe_gibbs_step(
       X = X0, y = y0 - drop(X0 %*% wk_new),
-      eta = eta_0, xi = xi_0, Q = Q0_gauss,
-      w = w, s = s, p = p, a = a, b = b,
-      sigma2 = sigma2_0, kappa = kappa_0, EB = EB
+      eta = eta_0, xi = xi_0, Q = Q0,
+      w = w, s = s, a = a, b = b, p = p,
+      sigma2 = sigma2_0, kappa = kappa_0, EB = EB,
+      truncated_global_update = enforce_delta_stronger_shrinkage,
+      truncation_threshold    = if (enforce_delta_stronger_shrinkage) xi_k else NULL
     )
     delta_new <- delta_samp$new_beta
     eta_0     <- delta_samp$new_eta
@@ -190,45 +200,68 @@ blast_oracle <- function(
 
     beta <- wk_new + delta_new
 
-    # Save draws
-    betaout[i, ]  <- beta
-    wk_out[i, ]   <- wk_new
-    etaout[i, ]   <- eta_0
-    eta_kout[i, ] <- eta_k
-    xi_0out[i]    <- xi_0
-    xi_kout[i]    <- xi_k
-    sigma2_0out[i] <- sigma2_0
-    sigma2_kout[i] <- sigma2_k
-    kappa_0out[i] <- kappa_0
-    kappa_kout[i] <- kappa_k
+    ## Save draws
+    betaout[i, ]    <- beta
+    wk_out[i, ]     <- wk_new
+    etaout[i, ]     <- eta_0
+    eta_kout[i, ]   <- eta_k
+    xi_0out[i]      <- xi_0
+    xi_kout[i]      <- xi_k
+    sigma2_0out[i]  <- sigma2_0
+    sigma2_kout[i]  <- sigma2_k
+    kappa_0out[i]   <- kappa_0
+    kappa_kout[i]   <- kappa_k
+
+    ## (3) EB update *inside* the sampler (oracle: no marginal adjustment)
+    if (EB && i == burn + iterEBstep) {
+      tmp_k <- eb_em_max(
+        kappa = kappa_k, N = N_k,
+        xi_out = xi_kout, sigma2_out = sigma2_kout,
+        iterEBstep = iterEBstep, eb_counter = 0, i = i
+      )
+      kappa_k <- tmp_k$kappa
+
+      tmp_0 <- eb_em_max(
+        kappa = kappa_0, N = n0,
+        xi_out = xi_0out, sigma2_out = sigma2_0out,
+        iterEBstep = iterEBstep, eb_counter = 0, i = i
+      )
+      kappa_0 <- tmp_0$kappa
+
+      if (progress_every > 0) {
+        message(sprintf("EB updated: kappa_0=%.3f, kappa_k=%.3f", kappa_0, kappa_k))
+      }
+    }
+
+    if (progress_every > 0 && i %% progress_every == 0) {
+      message(sprintf("Iteration: %d", i))
+    }
   }
 
-  # Summaries
-  burn_all <- burn + iterEBstep
-  keep     <- seq.int(burn_all + 1L, nmc)
+  ## --- Summaries
+  keep <- seq.int(burn + iterEBstep + 1L, nmc)
 
   beta_s   <- betaout[keep, , drop = FALSE]
   wk_s     <- wk_out[keep, , drop = FALSE]
   eta_s    <- etaout[keep, , drop = FALSE]
-  eta_k_s  <- eta_kout[keep, , drop = FALSE]
   xi0_s    <- xi_0out[keep]
-  xik_s    <- xi_kout[keep]
   sig0_s   <- sigma2_0out[keep]
-  sigk_s   <- sigma2_kout[keep]
-  kappa0_s <- kappa_0out[keep]
-  kappak_s <- kappa_kout[keep]
 
   res <- list(
     BetaHat = colMeans(beta_s),
+    BetaHatMedian = apply(beta_s, 2, median),
     LeftCI  = apply(beta_s, 2, stats::quantile, probs = alpha/2),
     RightCI = apply(beta_s, 2, stats::quantile, probs = 1 - alpha/2),
+    Sigma2Hat = mean(sig0_s),
+    LambdaHat = colMeans(1/sqrt(eta_s)),
+    TauHat    = mean(1/sqrt(xi0_s)),
     BetaSamples   = beta_s,
     wkSamples     = wk_s,
     LambdaSamples = 1/sqrt(eta_s),
     TauSamples    = 1/sqrt(xi0_s),
     Sigma2Samples = sig0_s,
-    kappa_0 = kappa0_s,
-    kappa_k = kappak_s
+    kappa_0 = kappa_0out[keep],
+    kappa_k = kappa_kout[keep]
   )
 
   return(res)

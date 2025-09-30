@@ -27,13 +27,15 @@
 #' @param w Inverse-Gamma prior shape parameter used in horseshoe updates.
 #' @param alpha Credible-interval level (e.g., `0.05` for 95% CIs).
 #' @param iterEBstep Number of empirical Bayes EM steps to estimate global shrinkage scale parameter; if `0`, empirical Bayes is disabled.
-#' @param sir Whether to use SIR within the empirical Bayes routine.
 #' @param gamma_init Optional binary vector of length `K` giving the initial
 #'   informative-set indicator; if `NULL`, a candidate set is chosen via
 #'   `construct_candidate_set()`.
 #' @param temp_scale Numeric temperature multiplier for \eqn{\gamma}-update
 #'   probabilities (values > 1 flatten differences; < 1 sharpen). If `NULL`,
 #'   the function initializes `temp_scale <- 1/p` and enables adaptive tempering.
+#' @param enforce_delta_stronger_shrinkage Logical; if TRUE, the global proposal
+#'   for the target “contrast” block (delta) is lower-truncated at the current
+#'   global scale of the informative/source block, enforcing xi_delta ≥ xi_source.
 #'
 #' @return
 #' A list with posterior summaries and draws:
@@ -71,9 +73,11 @@ blast_select <- function(
     burn = 1000, iter = 3000,
     a = 1/5, b = 10,
     s = 0.8, tau = 1, sigma2 = 1, w = 1, alpha = 0.05,
-    iterEBstep = 0, sir = TRUE,
+    iterEBstep = 0,
     gamma_init = NULL,
-    temp_scale = NULL) {
+    temp_scale = NULL,
+    enforce_delta_stronger_shrinkage = FALSE
+) {
   ## ----- Basic dimensions & bookkeeping -----
   p <- ncol(X)
   N <- sum(n.vec)
@@ -186,21 +190,14 @@ blast_select <- function(
       xi_out = eb_xi_samples[(EB_burn + 1):(EB_step_total + 1)],
       sigma2_out = eb_sigma2_samples[(EB_burn + 1):(EB_step_total + 1)],
       iterEBstep = iterEBstep, eb_counter = 0,
-      sir = sir, i = iterEBstep
+      i = iterEBstep
     )
 
-    kappa_A <- tmp$kappa
-    kappa_0 <- tmp$kappa
-    if (tmp$kappa > 0) {
-      kappa_0     <- tmp$kappa / 10
-      kappa_A_bar <- tmp$kappa * 1.5
-    } else {
-      kappa_0     <- tmp$kappa * 1.2
-      kappa_A_bar <- tmp$kappa / 2
-    }
-    print(kappa_A)
-  }
+    kappa_A     <- tmp$kappa
+    kappa_0     <- tmp$kappa
+    kappa_A_bar <- tmp$kappa
 
+  }
   ## =======================
   ## =       MCMC         =
   ## =======================
@@ -213,12 +210,15 @@ blast_select <- function(
 
     ## (2) Update target delta given current wA_new
     delta_samp <- exact_horseshoe_gibbs_step(
-      X_0, y_0 - X_0 %*% wA_new,
+      X = X_0,
+      y = y_0 - X_0 %*% wA_new,
       eta = eta_0, xi = xi_0, Q = Q0,
       w = w, s = s, a = a, b = b, p = p,
-      sigma2 = sigma2_0, kappa = kappa_0,
-      EB = EB, kappa_0_trans = TRUE
+      sigma2 = sigma2_0, kappa = kappa_0, EB = EB,
+      truncated_global_update = enforce_delta_stronger_shrinkage,
+      truncation_threshold    = if (enforce_delta_stronger_shrinkage) xiA else NULL
     )
+
     delta_new <- delta_samp$new_beta
     xi_0      <- delta_samp$new_xi
     sigma2_0  <- delta_samp$new_sigma2
@@ -242,8 +242,11 @@ blast_select <- function(
       X = newX, y = newy,
       eta = etaA, xi = xiA, Q = Q,
       w = w, s = s, a = a, b = b, p = p,
-      sigma2 = sigma2_A, kappa = kappa_A, EB = EB
+      sigma2 = sigma2_A, kappa = kappa_A, EB = EB,
+      truncated_global_update = FALSE,
+      truncation_threshold = NULL
     )
+
     wA_new   <- wA_samp$new_beta
     xiA      <- wA_samp$new_xi
     sigma2_A <- wA_samp$new_sigma2
@@ -263,12 +266,14 @@ blast_select <- function(
     }
 
     w0_samp <- exact_horseshoe_gibbs_step(
-      X_A_bar, y_A_bar,
+      X = X_A_bar, y = y_A_bar,
       eta = eta_A_bar, xi = xi_A_bar, Q = Q_A_bar,
       w = w, s = s, a = a, b = b, p = p,
-      sigma2 = sigma2_A_bar, kappa = kappa_A_bar,
-      EB = EB, kappa_A_bar_trans = TRUE
+      sigma2 = sigma2_A_bar, kappa = kappa_A_bar, EB = EB,
+      truncated_global_update = FALSE,
+      truncation_threshold = NULL
     )
+
     w0_new       <- w0_samp$new_beta
     xi_A_bar     <- w0_samp$new_xi
     sigma2_A_bar <- w0_samp$new_sigma2

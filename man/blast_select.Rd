@@ -18,9 +18,9 @@ blast_select(
   w = 1,
   alpha = 0.05,
   iterEBstep = 0,
-  sir = TRUE,
   gamma_init = NULL,
-  temp_scale = NULL
+  temp_scale = NULL,
+  enforce_delta_stronger_shrinkage = FALSE
 )
 }
 \arguments{
@@ -51,8 +51,6 @@ The first entry \code{n0} is the target size; the rest are auxiliary-study sizes
 
 \item{iterEBstep}{Number of empirical Bayes EM steps to estimate global shrinkage scale parameter; if \code{0}, empirical Bayes is disabled.}
 
-\item{sir}{Whether to use SIR within the empirical Bayes routine.}
-
 \item{gamma_init}{Optional binary vector of length \code{K} giving the initial
 informative-set indicator; if \code{NULL}, a candidate set is chosen via
 \code{construct_candidate_set()}.}
@@ -60,6 +58,10 @@ informative-set indicator; if \code{NULL}, a candidate set is chosen via
 \item{temp_scale}{Numeric temperature multiplier for \eqn{\gamma}-update
 probabilities (values > 1 flatten differences; < 1 sharpen). If \code{NULL},
 the function initializes \code{temp_scale <- 1/p} and enables adaptive tempering.}
+
+\item{enforce_delta_stronger_shrinkage}{Logical; if TRUE, the global proposal
+for the target “contrast” block (delta) is lower-truncated at the current
+global scale of the informative/source block, enforcing xi_delta ≥ xi_source.}
 }
 \value{
 A list with posterior summaries and draws:

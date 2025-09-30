@@ -2,7 +2,7 @@
 % Please edit documentation in R/simulate_multistudy_regression.R
 \name{simulate_multistudy_regression}
 \alias{simulate_multistudy_regression}
-\title{Generates data for high-dimensional linear regression}
+\title{Generate stacked multi-source regression data (target + sources)}
 \usage{
 simulate_multistudy_regression(
   p,
@@ -13,7 +13,6 @@ simulate_multistudy_regression(
   sig.beta,
   sig.delta1,
   sig.delta2,
-  beta_bias,
   contam_pct = 0.015,
   ni_contam_factor = NULL,
   test_set = FALSE,
@@ -22,30 +21,115 @@ simulate_multistudy_regression(
 )
 }
 \arguments{
-\item{p}{number of predictors}
+\item{p}{Integer. Number of predictors.}
 
-\item{s}{number of signals}
+\item{s}{Integer. Number of non-zero signals in the base vector \eqn{\beta}.}
 
-\item{M}{number of studies}
+\item{M}{Integer. Number of source studies (total studies = \code{M + 1} including target).}
 
-\item{size.A0}{number of informative studies}
+\item{size.A0}{Integer in \code{[0, M]}. Number of \emph{informative} source studies
+(by construction, these are the first \code{size.A0} auxiliaries).}
 
-\item{n.vec}{vector of sample sizes for each study}
+\item{n.vec}{Integer vector of length \code{M + 1} with per-study sample sizes
+\code{c(n0, n1, ..., nM)}; \code{n0} is the target sample size.}
 
-\item{sig.beta}{signal size}
+\item{sig.beta}{Numeric. Magnitude of the non-zero entries in \eqn{\beta}.}
 
-\item{beta_bias}{signal bias}
+\item{sig.delta1}{Numeric. Shift size applied to \code{h} coordinates for \strong{informative} studies.}
 
-\item{contam_pct}{contamination percentage}
+\item{sig.delta2}{Numeric. Shift size applied to \code{q} coordinates for \strong{non-informative} studies.}
 
-\item{ni_contam_factor}{non-informative contamination factor}
+\item{contam_pct}{Numeric in \code{(0,1)}. Fraction of coordinates shifted in informative studies;
+used to set \code{h = ceiling(p * contam_pct)}. Default \code{0.015}.}
 
-\item{test_set}{whether to generate a test set}
+\item{ni_contam_factor}{Optional numeric. If supplied, sets
+\code{q = ceiling(ni_contam_factor * s)} for non-informative studies; otherwise \code{q = 2 * s}.}
 
-\item{pct_test}{percentage of data to use for test set}
+\item{test_set}{Logical. If \code{TRUE}, hold out \code{pct_test} fraction of target rows as a test set.}
 
-\item{type}{type of data to generate}
+\item{pct_test}{Numeric in \code{(0,1)}. Fraction of target observations to hold out when \code{test_set = TRUE}.}
+
+\item{type}{Character. Outcome model: \code{"gaussian"} (default) or \code{"logistic"}.}
+}
+\value{
+A list with components:
+\itemize{
+\item \code{X}: numeric matrix of size \code{sum(n.vec) × p} (or \code{(sum(n.vec) - n.test) × p} if a test split is made).
+\item \code{y}: numeric vector of length \code{sum(n.vec)} (or \code{sum(n.vec) - n.test} with test split).
+\item \code{coef.all}: list with
+\itemize{
+\item \code{beta0}: length-\code{p} base signal vector,
+\item \code{W}: \code{p × M} matrix of source perturbations (one column per source study).
+}
+\item \code{X.test}, \code{y.test}: held-out target design/response (or \code{NULL} if \code{test_set = FALSE}).
+\item \code{n.vec}: possibly updated per-study sizes (target reduced by \code{n.test} if a test split was made).
+}
 }
 \description{
-Generates data for high-dimensional linear regression
+Simulates a high-dimensional dataset for a \strong{target} study followed by
+\code{M} \strong{source} studies, with a controllable subset of auxiliaries
+designated as \emph{informative}. The per-study coefficient vectors are built from
+a shared sparse signal \eqn{\beta} and study-specific perturbations:
+informative studies receive a shift of size \code{sig.delta1} on \eqn{h}
+coordinates, while non-informative studies receive a shift of size
+\code{sig.delta2} on \eqn{q} coordinates.
+
+Outcomes can be Gaussian (\eqn{y = X\beta + \varepsilon}) or logistic
+(\eqn{y \sim \mathrm{Bernoulli}(\text{logit}^{-1}(X\beta))}).
+}
+\details{
+\itemize{
+\item \strong{Stacking/order:} Rows of \code{X} and entries of \code{y} are stacked as
+the target study \strong{first}, then the \code{M} auxiliaries, in the order
+implied by \code{n.vec = c(n0, n1, ..., nM)}.
+\item \strong{Base signal \eqn{\beta}:} first \code{s} entries set to \code{sig.beta},
+remaining \code{p - s} to 0.
+\item \strong{Study perturbations:} Let \code{h = ceiling(p * contam_pct)}.
+Informative studies (first \code{size.A0}) shift \code{h} randomly chosen
+coordinates of \eqn{\beta} by \code{-sig.delta1}. Non-informative studies
+shift \code{q} coordinates by \code{-sig.delta2}, where
+\code{q = ceiling(ni_contam_factor * s)} if provided, otherwise \code{q = 2 * s}.
+\item \strong{Design:} Each study draws rows independently from \eqn{N_p(0, I_p)}.
+\item \strong{Test split:} If \code{test_set = TRUE}, a fraction \code{pct_test} of the
+\strong{target} rows are held out and returned as \code{X.test}/\code{y.test};
+\code{n.vec[1]} is reduced accordingly.
+}
+}
+\section{Notes}{
+
+\itemize{
+\item Ensure \code{length(n.vec) == M + 1} and \code{size.A0 <= M}.
+\item This function draws from \code{mvtnorm::rmvnorm}; declare
+\verb{@importFrom mvtnorm rmvnorm} in your package if not already imported.
+\item Randomness is uncontrolled unless you set \code{set.seed()} beforehand.
+}
+}
+
+\examples{
+\dontrun{
+set.seed(42)
+p <- 50; s <- 5; M <- 4
+n.vec <- c(120, rep(100, M))
+
+sim <- simulate_multistudy_regression(
+  p = p, s = s, M = M, size.A0 = 2, n.vec = n.vec,
+  sig.beta = 0.7, sig.delta1 = 0.3, sig.delta2 = 1.0,
+  contam_pct = 0.02, type = "gaussian"
+)
+
+str(sim$X); length(sim$y)
+str(sim$coef.all)
+
+# With a test split on the target study (~20\% held out)
+sim2 <- simulate_multistudy_regression(
+  p = p, s = s, M = M, size.A0 = 2, n.vec = n.vec,
+  sig.beta = 0.7, sig.delta1 = 0.3, sig.delta2 = 1.0,
+  test_set = TRUE, pct_test = 0.2
+)
+c(train_target = sim2$n.vec[1], test_rows = nrow(sim2$X.test))
+}
+
+}
+\seealso{
+\code{\link[=blast_select]{blast_select()}}, \code{\link[=blast_oracle]{blast_oracle()}}
 }

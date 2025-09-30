@@ -2,7 +2,7 @@
 % Please edit documentation in R/horseshoe_gibbs_step.R
 \name{exact_horseshoe_gibbs_step}
 \alias{exact_horseshoe_gibbs_step}
-\title{One step of the Gibbs sampler for the horseshoe model}
+\title{One Gibbs update for the (exact) horseshoe regression}
 \usage{
 exact_horseshoe_gibbs_step(
   X,
@@ -16,57 +16,110 @@ exact_horseshoe_gibbs_step(
   b,
   p,
   sigma2,
-  sigma2_0 = NULL,
   kappa,
-  n0 = NULL,
-  N_k = NULL,
   EB,
   p_star = NULL,
-  kappa_0_trans = FALSE,
-  kappa_A_bar_trans = FALSE,
-  c0 = 1/2,
-  c_bar = 1,
-  xiA_trunc = FALSE,
-  xiA_trunc_val = NULL
+  truncated_global_update = FALSE,
+  truncation_threshold = NULL
 )
 }
 \arguments{
-\item{X}{Predictor matrix}
+\item{X}{Numeric matrix of predictors (\eqn{N \times p}).}
 
-\item{y}{Response vector}
+\item{y}{Numeric response vector (length \eqn{N}).}
 
-\item{eta}{current value of local shrinkage parameter}
+\item{eta}{Numeric vector (length \eqn{p}) of current local scales \eqn{\eta_j}.}
 
-\item{xi}{current value of global shrinkage parameter}
+\item{xi}{Numeric scalar: current global scale \eqn{\xi}.}
 
-\item{Q}{XtX}
+\item{Q}{Precomputed \eqn{X^\top X} (\eqn{p \times p}).}
 
-\item{w}{inverse gamma prior shape parameter}
+\item{w}{Positive scalar: Inverse-Gamma prior shape parameter used in updates.}
 
-\item{s}{tuning parameter for the proposal distribution}
+\item{s}{Nonnegative scalar: proposal variance for the random walk on \eqn{\log \xi}.}
 
-\item{a}{parameter for the rejection sampler}
+\item{a, b}{Positive scalars: tuning parameters for the rejection sampler of \eqn{\eta}.}
 
-\item{b}{parameter for the rejection sampler}
+\item{p}{Integer: number of predictors.}
 
-\item{p}{number of predictors}
+\item{sigma2}{Numeric scalar or \code{NULL}: error variance. If \code{NULL}, a default of \code{1}
+is used; otherwise it is sampled from the usual Inverse-Gamma update.}
 
-\item{sigma2}{error variance}
+\item{kappa}{Numeric: EB sparsity parameter when \code{EB = TRUE}.}
 
-\item{kappa}{parameter for global shrinkage prior}
+\item{EB}{Logical: if \code{TRUE}, use EB scaling via \code{kappa}; otherwise use
+\code{p_star} (if provided) or a neutral default.}
 
-\item{EB}{logical, whether to use empirical Bayes or not}
+\item{p_star}{Optional integer: target number of nonzeros when \code{EB = FALSE}.}
 
-\item{p_star}{number of non-zero coefficients if want to specify}
+\item{truncated_global_update}{Logical: if \code{TRUE}, propose \eqn{\log \xi} from a
+lower-truncated normal with lower bound \code{log(truncation_threshold)}.}
 
-\item{kappa_0_trans}{logical for whether to transform overall sparsity of bias parameters for TL}
-
-\item{kappa_A_bar_trans}{logical for whether to transform overall sparsity of noninformative studies for TL}
-
-\item{c0}{factor for number of signals for bias}
-
-\item{c_bar}{factor for number of signals for noninformative studies}
+\item{truncation_threshold}{Numeric lower bound used when
+\code{truncated_global_update = TRUE}. Must be > 0.}
+}
+\value{
+A list with:
+\itemize{
+\item \code{new_beta}: numeric vector length \eqn{p} (updated coefficients),
+\item \code{new_xi}: updated global scale \eqn{\xi},
+\item \code{new_sigma2}: updated error variance \eqn{\sigma^2},
+\item \code{new_eta}: vector length \eqn{p} (updated local scales).
+}
 }
 \description{
-One step of the Gibbs sampler for the horseshoe model
+Performs a single Gibbs-sampling sweep for the \strong{horseshoe} prior in a
+Gaussian (or latent-Gaussian) linear model. The step updates:
+(i) the global shrinkage \eqn{\xi} via a random walk on \eqn{\log \xi},
+(ii) the regression coefficients \eqn{\beta}, and
+(iii) the local shrinkage parameters \eqn{\eta_j}.
+
+Includes small numerical-stability tweaks (capping extreme \eqn{\eta}/\eqn{\xi}
+and using \eqn{p<N} vs. \eqn{p\ge N} algebra). Portions adapt code from the
+\strong{Mhorseshoe} package (Johndrow et al., 2020); see \strong{References}.
+}
+\details{
+Let \eqn{Q = X^\top X}. When \eqn{p < N}, the \eqn{\beta}-update uses solves with
+\eqn{Q_\* = \xi\,\mathrm{diag}(\eta) + Q}. When \eqn{p \ge N}, it uses
+\eqn{M = I_N + X \mathrm{diag}(1/\eta) X^\top / \xi}.
+
+The global parameter \eqn{\xi} is proposed on the log scale with variance \code{s}.
+You can optionally \strong{truncate} the proposal below at \code{log(truncation_threshold)}
+by setting \code{truncated_global_update = TRUE}.
+
+The global-scale factor \eqn{\psi} is set either from an empirical-Bayes sparsity
+parameter \code{kappa} when \code{EB = TRUE}, or from a target number of nonzeros
+\code{p_star} (if supplied) otherwise.
+}
+\note{
+Code structure and several numerical tricks are adapted from
+\strong{Mhorseshoe} (Johndrow et al., 2020). Extreme values of \eqn{\eta} and
+\eqn{\xi} are lightly capped for stability in high dimensions.
+}
+\examples{
+\dontrun{
+set.seed(1)
+N <- 200; p <- 50
+X <- matrix(rnorm(N * p), N, p)
+beta <- c(rnorm(5, 0, 2), rep(0, p - 5))
+y <- as.numeric(X \%*\% beta + rnorm(N))
+
+eta <- rep(1, p); xi <- 1; w <- 1; s <- 0.5; a <- 0.5; b <- 0.5
+Q <- crossprod(X)
+
+out <- exact_horseshoe_gibbs_step(
+  X, y, eta = eta, xi = xi, Q = Q, w = w, s = s,
+  a = a, b = b, p = p, sigma2 = 1, kappa = 0, EB = FALSE
+)
+str(out)
+}
+
+}
+\references{
+Johndrow, J., Orenstein, P., & Bhattacharya, A. (2020).
+\emph{Mhorseshoe}: Efficient sampling for the horseshoe prior. R package.
+}
+\seealso{
+\code{\link[Mhorseshoe]{Mhorseshoe}}; higher-level routines such as
+\code{blast_select()} / \code{blast_oracle()} call this step internally.
 }

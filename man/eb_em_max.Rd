@@ -12,7 +12,7 @@ eb_em_max(
   iterEBstep,
   eb_counter,
   i,
-  sir = F,
+  sir = T,
   maxiter = 20,
   tol = 1e-06
 )

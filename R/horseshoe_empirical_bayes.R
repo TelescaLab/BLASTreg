@@ -13,7 +13,7 @@
 #' @param tol tolerance for EB step
 #'
 #' @export
-eb_em_max <- function(kappa, N, xi_out, sigma2_out, iterEBstep, eb_counter, i, sir = F, maxiter = 20, tol = 1e-6){
+eb_em_max <- function(kappa, N, xi_out, sigma2_out, iterEBstep, eb_counter, i, sir = T, maxiter = 20, tol = 1e-6){
   stop = FALSE
   it = 0
   while(!stop){
