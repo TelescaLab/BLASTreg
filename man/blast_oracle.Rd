@@ -51,8 +51,13 @@ ensuring \code{xi_delta >= xi_wk} and thus stronger/equal shrinkage on contrasts
 }
 \value{
 List with posterior summaries and samples.
-
-#' @examples
+}
+\description{
+Oracle BLAST-style regression for Gaussian outcomes with horseshoe prior.
+Known-informative-set setting; handles target-only edge case.
+Supports optional empirical Bayes step.
+}
+\examples{
 \dontrun{
 set.seed(1)
 
@@ -84,9 +89,5 @@ fit <- blast_oracle(
 # Inspect estimated coefficients
 str(fit$BetaHat)
 }
-}
-\description{
-Oracle BLAST-style regression for Gaussian outcomes with horseshoe prior.
-Known-informative-set setting; handles target-only edge case.
-Supports optional empirical Bayes step.
+
 }

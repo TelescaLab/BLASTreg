@@ -1,3 +1,14 @@
+ind.set<- function(n.vec, k.vec){
+  ind.re <- NULL
+  for(k in k.vec){
+    if(k==1){
+      ind.re<-c(ind.re,1: n.vec[1])
+    }else{
+      ind.re<- c(ind.re, (sum(n.vec[1:(k-1)])+1): sum(n.vec[1:k]))
+    }
+  }
+  ind.re
+}
 
 set_data_inds <- function(gamma, n.vec){
   # Set up indices according to the gamma vector
@@ -62,4 +73,6 @@ construct_candidate_set <- function(X, y, n.vec) {
   Tset<- unique(Tset)
   return(Tset)
 }
+
+
 

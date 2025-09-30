@@ -26,7 +26,7 @@
 #' @return List with posterior summaries and samples.
 #'
 #'
-#' #' @examples
+#' @examples
 #' \dontrun{
 #' set.seed(1)
 #'

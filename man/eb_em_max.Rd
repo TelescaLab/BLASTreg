@@ -2,7 +2,7 @@
 % Please edit documentation in R/horseshoe_empirical_bayes.R
 \name{eb_em_max}
 \alias{eb_em_max}
-\title{Empirical Bayes maximization via EM algorithm}
+\title{Empirical Bayes update for global sparsity in Horseshoe via EM / Newton steps}
 \usage{
 eb_em_max(
   kappa,
@@ -18,26 +18,85 @@ eb_em_max(
 )
 }
 \arguments{
-\item{kappa}{initial value of global shrinkage prior parameter}
+\item{kappa}{Numeric scalar. Current value of the sparsity hyperparameter to
+be updated.}
 
-\item{N}{total number of observations}
+\item{N}{Integer. Effective sample size used to scale the global parameter
+\eqn{\psi = \exp(\kappa)\sqrt{\sigma^2/N}}.}
 
-\item{xi_out}{global shrinkage parameter draws from posterior}
+\item{xi_out}{Numeric vector of past/posterior draws of the global parameter
+\eqn{\xi}; only the most recent EB window is used internally.}
 
-\item{sigma2_out}{error variance draws from posterior}
+\item{sigma2_out}{Numeric vector of past/posterior draws of \eqn{\sigma^2}.
+(Note: in the current implementation of \code{emp_bayes_step()} the EB update
+uses a working \eqn{\sigma^2 = 1} for stability; \code{sigma2_out} is accepted
+for future extensions and API symmetry.)}
 
-\item{iterEBstep}{number of iterations for empirical bayes step}
+\item{iterEBstep}{Integer. Size of the EB window (how many iterations’ worth
+of draws to use per EB refresh).}
 
-\item{eb_counter}{counter for empirical bayes step}
+\item{eb_counter}{Integer. How many EB refreshes have already occurred; used
+to compute the start of the EB window.}
 
-\item{i}{current iteration}
+\item{i}{Integer. Current MCMC iteration (end index of the EB window).}
 
-\item{sir}{whether to use SIR for empirical bayes}
+\item{sir}{Logical. If \code{TRUE}, apply a SIR-based refinement using weights
+proportional to the likelihood ratio at the updated vs. baseline \code{kappa}.}
 
-\item{maxiter}{maximum number of iterations for EB step}
+\item{maxiter}{Integer. Maximum Newton steps per EB call.}
 
-\item{tol}{tolerance for EB step}
+\item{tol}{Numeric. Convergence tolerance on the absolute gradient.}
+}
+\value{
+A list with components:
+\describe{
+\item{kappa}{Updated EB estimate of the sparsity parameter.}
+\item{grad}{Final (weighted) gradient at the returned \code{kappa}.}
+\item{it}{Number of Newton iterations performed.}
+}
 }
 \description{
-Empirical Bayes maximization via EM algorithm
+Maximizes the marginal likelihood of the horseshoe global scale through a
+short EM-style routine (implemented as safeguarded Newton updates) to produce
+an updated value of the sparsity hyperparameter \code{kappa}. Optionally performs
+a self–importance reweighting (SIR) refinement using the ratio of likelihoods
+at the updated vs. baseline \code{kappa}.
+}
+\details{
+The routine consumes posterior draws of the global shrinkage parameter
+\eqn{\xi} (and, optionally, \eqn{\sigma^2}) from earlier MCMC iterations and
+optimizes the marginal log-likelihood with respect to \code{kappa}, where the
+working global scale is \eqn{\psi = \exp(\kappa)\sqrt{\sigma^2/N}}.
+
+The function calls an internal helper (\code{emp_bayes_step()}) that:
+\itemize{
+\item computes gradient and Hessian of the objective,
+\item performs a Newton step with backtracking line search,
+\item (optionally) applies SIR weights to stabilize/adjust the update.
+}
+
+Only the subset of indices corresponding to the most recent EB window is
+used (from \code{eb_counter * iterEBstep + 1} through \code{i}). Convergence is when
+\verb{|grad| < tol}, or when \code{maxiter} Newton iterations have elapsed.
+}
+\examples{
+\dontrun{
+set.seed(1)
+N <- 200
+xi_draws <- rexp(1000, rate = 1)   # toy xi draws
+sig2_draws <- rep(1, 1000)
+out <- eb_em_max(
+  kappa = -0.5, N = N,
+  xi_out = xi_draws, sigma2_out = sig2_draws,
+  iterEBstep = 200, eb_counter = 0, i = 200,
+  sir = TRUE
+)
+out$kappa
+}
+
+}
+\seealso{
+Internal helpers: \code{emp_bayes_step()}, \code{eb_obj_fun()}, \code{eb_loglik()},
+\code{eb_grad()}, \code{eb_hess()}. Higher-level samplers such as \code{blast_select()}
+and \code{blast_oracle()} call this routine to refresh global sparsity.
 }
