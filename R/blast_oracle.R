@@ -17,7 +17,45 @@
 #' @param sir Logical; passed to EB helper.
 #' @param progress_every Print progress every this many iters (0 = silent).
 #'
+#'
+#'
+#'
 #' @return List with posterior summaries and samples.
+#'
+#'
+#' #' @examples
+#' \dontrun{
+#' set.seed(1)
+#'
+#' # --- Simulate data where all auxiliaries are informative ---
+#' M <- 5
+#' n.vec <- c(100, rep(100, M))   # target first, then auxiliaries
+#' p <- 50; s <- 3
+#' size.A0 <- M                   # all auxiliaries informative
+#'
+#' df <- simulate_multistudy_regression(
+#'   p = p, s = s, M = M, size.A0 = size.A0, n.vec = n.vec,
+#'   sig.beta = 0.5, sig.delta1 = 0.3, sig.delta2 = 1,
+#'   contam_pct = 0.01, type = "gaussian"
+#' )
+#'
+#' # --- Construct oracle gamma (all auxiliaries informative) ---
+#' K <- length(n.vec) - 1
+#' gamma_oracle <- rep(1L, K)
+#'
+#' # --- Fit Oracle BLAST ---
+#' fit <- blast_oracle(
+#'   X = df$X, y = df$y, n.vec = df$n.vec,
+#'   gamma = gamma_oracle,
+#'   burn = 100, iter = 200,  # keep small for quick examples
+#'   a = 1/5, b = 10, s = 0.8,
+#'   tau = 1, sigma2 = 1, w = 1, alpha = 0.05
+#' )
+#'
+#' # Inspect estimated coefficients
+#' str(fit$BetaHat)
+#' }
+#'
 #' @export
 blast_oracle <- function(
     X, y, n.vec,

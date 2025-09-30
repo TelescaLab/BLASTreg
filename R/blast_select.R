@@ -5,56 +5,65 @@
 #' of informative source studies. The algorithm alternates between updating
 #' (i) target bias coefficients, (ii) auxiliary coefficients for the currently
 #' informative and non-informative sets, and (iii) the inclusion vector
-#' \eqn{\gamma} via a marginal-likelihood–based update, with optional empirical
-#' Bayes tuning of \eqn{\kappa}.
+#' \eqn{\gamma} via a marginal-likelihood–based update.
 #'
 #' @details
-#' The function expects the design matrix \code{X} and response \code{y} to be
-#' vertically concatenated across the target study followed by the auxiliary
-#' studies, in the order encoded by \code{n.vec}. The first element of
-#' \code{n.vec} is the target sample size; the remaining \code{K = length(n.vec)-1}
-#' entries correspond to the auxiliary studies in sequence.
+#' The design matrix `X` and response `y` should be stacked as the target study
+#' followed by the auxiliary studies according to `n.vec`. The first element of
+#' `n.vec` is the target sample size; the remaining `K = length(n.vec) - 1`
+#' entries correspond to auxiliary studies in sequence.
 #'
 #' @param X Predictor matrix of dimension \eqn{(\sum n_k) \times p}.
 #' @param y Response vector of length \eqn{\sum n_k}.
-#' @param n.vec Integer vector of study sample sizes \code{c(n0, n1, ..., nK)}.
-#'              The first entry \code{n0} is the target size; the rest are
-#'              auxiliary-study sizes.
-#' @param burn Integer. Number of burn-in iterations.
-#' @param iter Integer. Number of post–burn-in iterations to keep.
-#' @param a,b Parameters for the rejection sampler used in horseshoe updates.
+#' @param n.vec Integer vector of study sample sizes `c(n0, n1, ..., nK)`.
+#'   The first entry `n0` is the target size; the rest are auxiliary-study sizes.
+#' @param burn Number of burn-in iterations.
+#' @param iter Number of post–burn-in iterations to keep.
+#' @param a Parameter for the rejection sampler used in horseshoe updates.
+#' @param b Parameter for the rejection sampler used in horseshoe updates.
 #' @param s Tuning parameter for the proposal distribution in the horseshoe step.
 #' @param tau Global shrinkage parameter (prior scale; used for initialization).
 #' @param sigma2 Error variance (used for initialization).
 #' @param w Inverse-Gamma prior shape parameter used in horseshoe updates.
-#' @param alpha Credible-interval level (e.g., \code{0.05} for 95\% CIs).
-#' @param iterEBstep Integer. Number of empirical Bayes EM steps; if \code{0},
-#'   empirical Bayes is disabled.
-#' @param sir Logical. Whether to use SIR within the empirical Bayes routine.
-#' @param gamma_init Optional binary vector of length \code{K} giving the initial
-#'   informative-set indicator; if \code{NULL}, a candidate set is chosen using
-#'   \code{construct_candidate_set()}.
+#' @param alpha Credible-interval level (e.g., `0.05` for 95% CIs).
+#' @param iterEBstep Number of empirical Bayes EM steps; if `0`, empirical Bayes is disabled.
+#' @param sir Whether to use SIR within the empirical Bayes routine.
+#' @param gamma_init Optional binary vector of length `K` giving the initial
+#'   informative-set indicator; if `NULL`, a candidate set is chosen via
+#'   `construct_candidate_set()`.
 #' @param temp_scale Numeric temperature multiplier for \eqn{\gamma}-update
-#'   probabilities (values > 1 flatten differences; < 1 sharpen). If specified, then the value is fixed;
+#'   probabilities (values > 1 flatten differences; < 1 sharpen). If `NULL`,
+#'   the function initializes `temp_scale <- 1/p` and enables adaptive tempering.
 #'
-#' @return A list with posterior summaries and draws:
-#' \itemize{
-#'   \item \code{BetaHat}, \code{BetaHatMedian} — posterior mean/median of \eqn{\beta}.
-#'   \item \code{LeftCI}, \code{RightCI} — marginal \eqn{100(1-\alpha)\%} credible bounds.
-#'   \item \code{Sigma2Hat}, \code{TauHat}, \code{LambdaHat} — posterior means of
-#'         \eqn{\sigma^2}, \eqn{\tau}, and local shrinkage \eqn{\lambda_j}.
-#'   \item \code{BetaSamples}, \code{LambdaSamples}, \code{TauSamples}, \code{Sigma2Samples} —
-#'         MCMC draws post–burn-in.
-#'   \item \code{GammaSamples} — draws of the informative-set indicator \eqn{\gamma}.
-#'   \item \code{W0Samples}, \code{WA_Samples} — draws of auxiliary coefficients for
-#'         non-informative and informative sets, respectively.
-#'   \item \code{GammaSums} — inclusion counts for each auxiliary study across kept draws.
-#' }
+#' @return
+#' A list with posterior summaries and draws:
+#'
+#' - `BetaHat`, `BetaHatMedian`: posterior mean/median of \eqn{\beta}.
+#' - `LeftCI`, `RightCI`: marginal \(100(1-\alpha)\%\) credible bounds.
+#' - `Sigma2Hat`, `TauHat`, `LambdaHat`: posterior means of \eqn{\sigma^2},
+#'   \eqn{\tau}, and local shrinkage \eqn{\lambda_j}.
+#' - `BetaSamples`, `LambdaSamples`, `TauSamples`, `Sigma2Samples`:
+#'   post–burn-in MCMC draws.
+#' - `GammaSamples`: draws of the informative-set indicator \eqn{\gamma}.
+#' - `W0Samples`, `WA_Samples`: auxiliary coefficients (non-informative vs informative).
+#' - `GammaSums`: inclusion counts for each auxiliary study across kept draws.
 #'
 #' @examples
-#' # (Pseudo-code) Suppose X, y, and n.vec are prepared appropriately:
-#' # fit <- blast_select(X, y, n.vec, burn = 1000, iter = 3000)
-#' # str(fit$BetaHat)
+#' \dontrun{
+#' set.seed(1)
+#' df <- simulate_multistudy_regression(
+#'   p = 50, s = 3, M = 5, size.A0 = 2,
+#'   n.vec = c(100, rep(100, 5)),
+#'   sig.beta = 0.5, sig.delta1 = 0.3, sig.delta2 = 1,
+#'   contam_pct = 0.01, type = "gaussian"
+#' )
+#'
+#' fit <- blast_select(
+#'   X = df$X, y = df$y, n.vec = df$n.vec,
+#'   burn = 100, iter = 200, adapt_temp_scale = TRUE
+#' )
+#' str(fit$BetaHat)
+#' }
 #'
 #' @export
 blast_select <- function(

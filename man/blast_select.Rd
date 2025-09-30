@@ -2,7 +2,7 @@
 % Please edit documentation in R/blast_select.R
 \name{blast_select}
 \alias{blast_select}
-\title{Bayesian Transfer Learning Shrinkage Regression with Source Selection}
+\title{Bayesian Transfer Learning Shrinkage Regression with Unknown Informative Samples}
 \usage{
 blast_select(
   X,
@@ -20,39 +20,89 @@ blast_select(
   iterEBstep = 0,
   sir = TRUE,
   gamma_init = NULL,
-  temp_scale = 1,
-  adapt_temp_scale = FALSE
+  temp_scale = NULL
 )
 }
 \arguments{
-\item{X}{predictor matrix}
+\item{X}{Predictor matrix of dimension \eqn{(\sum n_k) \times p}.}
 
-\item{y}{response vector}
+\item{y}{Response vector of length \eqn{\sum n_k}.}
 
-\item{n.vec}{vector of sample sizes for each study}
+\item{n.vec}{Integer vector of study sample sizes \code{c(n0, n1, ..., nK)}.
+The first entry \code{n0} is the target size; the rest are auxiliary-study sizes.}
 
-\item{burn}{burn-in iterations}
+\item{burn}{Number of burn-in iterations.}
 
-\item{iter}{number of iterations}
+\item{iter}{Number of post–burn-in iterations to keep.}
 
-\item{a}{parameter for rejection sampler}
+\item{a}{Parameter for the rejection sampler used in horseshoe updates.}
 
-\item{b}{parameter for rejection sampler}
+\item{b}{Parameter for the rejection sampler used in horseshoe updates.}
 
-\item{s}{tuning parameter for proposal distribution}
+\item{s}{Tuning parameter for the proposal distribution in the horseshoe step.}
 
-\item{tau}{global shrinkage parameter}
+\item{tau}{Global shrinkage parameter (prior scale; used for initialization).}
 
-\item{sigma2}{error variance}
+\item{sigma2}{Error variance (used for initialization).}
 
-\item{w}{inverse gamma prior shape parameter}
+\item{w}{Inverse-Gamma prior shape parameter used in horseshoe updates.}
 
-\item{alpha}{confidence level for credible intervals}
+\item{alpha}{Credible-interval level (e.g., \code{0.05} for 95\% CIs).}
 
-\item{iterEBstep}{number of iterations for empirical bayes step, if 0, no empirical bayes}
+\item{iterEBstep}{Number of empirical Bayes EM steps; if \code{0}, empirical Bayes is disabled.}
 
-\item{sir}{whether to use SIR for empirical bayes}
+\item{sir}{Whether to use SIR within the empirical Bayes routine.}
+
+\item{gamma_init}{Optional binary vector of length \code{K} giving the initial
+informative-set indicator; if \code{NULL}, a candidate set is chosen via
+\code{construct_candidate_set()}.}
+
+\item{temp_scale}{Numeric temperature multiplier for \eqn{\gamma}-update
+probabilities (values > 1 flatten differences; < 1 sharpen). If \code{NULL},
+the function initializes \code{temp_scale <- 1/p} and enables adaptive tempering.}
+}
+\value{
+A list with posterior summaries and draws:
+\itemize{
+\item \code{BetaHat}, \code{BetaHatMedian}: posterior mean/median of \eqn{\beta}.
+\item \code{LeftCI}, \code{RightCI}: marginal \(100(1-\alpha)\\%\) credible bounds.
+\item \code{Sigma2Hat}, \code{TauHat}, \code{LambdaHat}: posterior means of \eqn{\sigma^2},
+\eqn{\tau}, and local shrinkage \eqn{\lambda_j}.
+\item \code{BetaSamples}, \code{LambdaSamples}, \code{TauSamples}, \code{Sigma2Samples}:
+post–burn-in MCMC draws.
+\item \code{GammaSamples}: draws of the informative-set indicator \eqn{\gamma}.
+\item \code{W0Samples}, \code{WA_Samples}: auxiliary coefficients (non-informative vs informative).
+\item \code{GammaSums}: inclusion counts for each auxiliary study across kept draws.
+}
 }
 \description{
-Bayesian Transfer Learning Shrinkage Regression with Source Selection
+Runs an MCMC sampler for a BLAST linear regression with an unknown set
+of informative source studies. The algorithm alternates between updating
+(i) target bias coefficients, (ii) auxiliary coefficients for the currently
+informative and non-informative sets, and (iii) the inclusion vector
+\eqn{\gamma} via a marginal-likelihood–based update.
+}
+\details{
+The design matrix \code{X} and response \code{y} should be stacked as the target study
+followed by the auxiliary studies according to \code{n.vec}. The first element of
+\code{n.vec} is the target sample size; the remaining \code{K = length(n.vec) - 1}
+entries correspond to auxiliary studies in sequence.
+}
+\examples{
+\dontrun{
+set.seed(1)
+df <- simulate_multistudy_regression(
+  p = 50, s = 3, M = 5, size.A0 = 2,
+  n.vec = c(100, rep(100, 5)),
+  sig.beta = 0.5, sig.delta1 = 0.3, sig.delta2 = 1,
+  contam_pct = 0.01, type = "gaussian"
+)
+
+fit <- blast_select(
+  X = df$X, y = df$y, n.vec = df$n.vec,
+  burn = 100, iter = 200, adapt_temp_scale = TRUE
+)
+str(fit$BetaHat)
+}
+
 }

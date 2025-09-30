@@ -2,7 +2,7 @@
 % Please edit documentation in R/blast_oracle.R
 \name{blast_oracle}
 \alias{blast_oracle}
-\title{Bayesian Transfer Learning (Oracle) with Horseshoe Shrinkage}
+\title{Bayesian Transfer Learning (Oracle, Gaussian) with Horseshoe Shrinkage}
 \usage{
 blast_oracle(
   X,
@@ -19,7 +19,6 @@ blast_oracle(
   alpha = 0.05,
   iterEBstep = 0,
   sir = TRUE,
-  model = c("gaussian", "binomial"),
   progress_every = 100
 )
 }
@@ -38,7 +37,7 @@ blast_oracle(
 
 \item{tau}{Global scale (initial); xi = tau^{-2}.}
 
-\item{sigma2}{Error var (Gaussian only; ignored in logistic).}
+\item{sigma2}{Error variance (Gaussian).}
 
 \item{alpha}{Credible interval level.}
 
@@ -46,14 +45,46 @@ blast_oracle(
 
 \item{sir}{Logical; passed to EB helper.}
 
-\item{model}{"gaussian" or "binomial".}
-
 \item{progress_every}{Print progress every this many iters (0 = silent).}
 }
 \value{
-List with posterior summaries and samples (sigma2 fields NULL in logistic).
+List with posterior summaries and samples.
+
+#' @examples
+\dontrun{
+set.seed(1)
+
+# --- Simulate data where all auxiliaries are informative ---
+M <- 5
+n.vec <- c(100, rep(100, M))   # target first, then auxiliaries
+p <- 50; s <- 3
+size.A0 <- M                   # all auxiliaries informative
+
+df <- simulate_multistudy_regression(
+  p = p, s = s, M = M, size.A0 = size.A0, n.vec = n.vec,
+  sig.beta = 0.5, sig.delta1 = 0.3, sig.delta2 = 1,
+  contam_pct = 0.01, type = "gaussian"
+)
+
+# --- Construct oracle gamma (all auxiliaries informative) ---
+K <- length(n.vec) - 1
+gamma_oracle <- rep(1L, K)
+
+# --- Fit Oracle BLAST ---
+fit <- blast_oracle(
+  X = df$X, y = df$y, n.vec = df$n.vec,
+  gamma = gamma_oracle,
+  burn = 100, iter = 200,  # keep small for quick examples
+  a = 1/5, b = 10, s = 0.8,
+  tau = 1, sigma2 = 1, w = 1, alpha = 0.05
+)
+
+# Inspect estimated coefficients
+str(fit$BetaHat)
+}
 }
 \description{
-Unified Gaussian / Binomial (logistic with Pólya–Gamma) oracle BLAST-style regression.
-Known-informative-set setting; handles target-only edge case. Supports optional EB step.
+Oracle BLAST-style regression for Gaussian outcomes with horseshoe prior.
+Known-informative-set setting; handles target-only edge case.
+Supports optional empirical Bayes step.
 }
