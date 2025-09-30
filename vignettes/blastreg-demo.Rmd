@@ -1,0 +1,97 @@
+---
+title: "blastreg-demo"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{blastreg-demo}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(BLASTreg)
+set.seed(123)
+```
+
+## Oracle case: all auxiliaries informative
+
+
+### Simulating data for the Oracle case
+```{r}
+M <- 8
+n.vec.A <- c(120, rep(120, M))   # target first, then M auxiliaries
+p  <- 80              # number of predictors
+s  <- 5                # number of non-zero betas in target
+size.A0.A <- M                    # all auxiliaries informative
+
+dfA <- simulate_multistudy_regression(
+  p = p, s = s, M = M, size.A0 = size.A0.A, n.vec = n.vec.A,
+  sig.beta = 0.5, sig.delta1 = 0.3, sig.delta2 = 1.0,
+  contam_pct = 0.01, type = "gaussian"
+)
+
+K.A <- length(n.vec.A) - 1
+gamma_oracle <- rep(1L, K.A)      # all informative
+```
+
+
+### Fitting the model using Oracle BLAST 
+```{r}
+fit_oracle <- BLASTreg::blast_oracle(
+  X = dfA$X, y = dfA$y, n.vec = dfA$n.vec,
+  burn = 1000, iter = 3000,
+  a = 1/5, b = 10, s = 0.8,
+  tau = 1, sigma2 = 1, w = 1, alpha = 0.05
+)
+
+str(fit_oracle$BetaHat)
+```
+
+
+## Selection case: subset of auxiliaries informative
+
+### Simulating data for the Selection case
+```{r}
+M <- 10
+n.vec.B <- c(120, rep(120, M))
+p  <- 80
+s  <- 5
+size.A0.B <- 4                   # fewer informative than total
+
+dfB <- simulate_multistudy_regression(
+  p = p, s = s, M = M, size.A0 = size.A0.B, n.vec = n.vec.B,
+  sig.beta = 0.5, sig.delta1 = 0.3, sig.delta2 = 1.0,
+  contam_pct = 0.01, type = "gaussian"
+)
+
+K.B <- length(n.vec.B) - 1
+true_A_idx <- if (!is.null(dfB$A_idx)) dfB$A_idx else seq_len(size.A0.B)
+```
+
+### Fitting the model using BLAST with Source Selection
+```{r}
+fit_select <- BLASTreg::blast_select(
+  X = dfB$X, y = dfB$y, n.vec = dfB$n.vec,
+  burn = 1000, iter = 3000,
+  a = 1/5, b = 10, s = 0.8,
+  tau = 1, sigma2 = 1, w = 1, alpha = 0.05)
+
+```
+
+### Posterior inclusion probabilities
+```{r}
+# Posterior inclusion counts for each auxiliary study
+incl_counts <- fit_select$GammaSums
+# Rate of inclusion for each auxiliary study
+incl_rate   <- incl_counts / nrow(fit_select$GammaSamples)
+
+data.frame(study = seq_len(K.B),
+           inclusion_rate = round(incl_rate, 3))
+
+```

@@ -37,8 +37,7 @@ precompute_XtXXty <- function(X, y, K, n.vec){
   return(list(list_XtX = list_XtX, list_Xty = list_Xty))
 }
 
-#' Construct candidate sets from sparsity index
-#' @export
+#' Construct candidate sets from sparsity index (Li et al., 2020)
 construct_candidate_set <- function(X, y, n.vec) {
   M= length(n.vec)-1
   #step 2

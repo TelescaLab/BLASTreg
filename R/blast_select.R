@@ -1,369 +1,409 @@
-#' Bayesian Transfer Learning Shrinkage Regression with Source Selection
+#' Bayesian Transfer Learning Shrinkage Regression with Unknown Informative Samples
 #'
-#' @param X predictor matrix
-#' @param y response vector
-#' @param burn burn-in iterations
-#' @param iter number of iterations
-#' @param a parameter for rejection sampler
-#' @param b parameter for rejection sampler
-#' @param s tuning parameter for proposal distribution
-#' @param tau global shrinkage parameter
-#' @param sigma2 error variance
-#' @param w inverse gamma prior shape parameter
-#' @param alpha confidence level for credible intervals
-#' @param n.vec vector of sample sizes for each study
-#' @param iterEBstep number of iterations for empirical bayes step, if 0, no empirical bayes
-#' @param sir whether to use SIR for empirical bayes
+#' @description
+#' Runs an MCMC sampler for a BLAST linear regression with an unknown set
+#' of informative source studies. The algorithm alternates between updating
+#' (i) target bias coefficients, (ii) auxiliary coefficients for the currently
+#' informative and non-informative sets, and (iii) the inclusion vector
+#' \eqn{\gamma} via a marginal-likelihood–based update, with optional empirical
+#' Bayes tuning of \eqn{\kappa}.
+#'
+#' @details
+#' The function expects the design matrix \code{X} and response \code{y} to be
+#' vertically concatenated across the target study followed by the auxiliary
+#' studies, in the order encoded by \code{n.vec}. The first element of
+#' \code{n.vec} is the target sample size; the remaining \code{K = length(n.vec)-1}
+#' entries correspond to the auxiliary studies in sequence.
+#'
+#' @param X Predictor matrix of dimension \eqn{(\sum n_k) \times p}.
+#' @param y Response vector of length \eqn{\sum n_k}.
+#' @param n.vec Integer vector of study sample sizes \code{c(n0, n1, ..., nK)}.
+#'              The first entry \code{n0} is the target size; the rest are
+#'              auxiliary-study sizes.
+#' @param burn Integer. Number of burn-in iterations.
+#' @param iter Integer. Number of post–burn-in iterations to keep.
+#' @param a,b Parameters for the rejection sampler used in horseshoe updates.
+#' @param s Tuning parameter for the proposal distribution in the horseshoe step.
+#' @param tau Global shrinkage parameter (prior scale; used for initialization).
+#' @param sigma2 Error variance (used for initialization).
+#' @param w Inverse-Gamma prior shape parameter used in horseshoe updates.
+#' @param alpha Credible-interval level (e.g., \code{0.05} for 95\% CIs).
+#' @param iterEBstep Integer. Number of empirical Bayes EM steps; if \code{0},
+#'   empirical Bayes is disabled.
+#' @param sir Logical. Whether to use SIR within the empirical Bayes routine.
+#' @param gamma_init Optional binary vector of length \code{K} giving the initial
+#'   informative-set indicator; if \code{NULL}, a candidate set is chosen using
+#'   \code{construct_candidate_set()}.
+#' @param temp_scale Numeric temperature multiplier for \eqn{\gamma}-update
+#'   probabilities (values > 1 flatten differences; < 1 sharpen). If specified, then the value is fixed;
+#'
+#' @return A list with posterior summaries and draws:
+#' \itemize{
+#'   \item \code{BetaHat}, \code{BetaHatMedian} — posterior mean/median of \eqn{\beta}.
+#'   \item \code{LeftCI}, \code{RightCI} — marginal \eqn{100(1-\alpha)\%} credible bounds.
+#'   \item \code{Sigma2Hat}, \code{TauHat}, \code{LambdaHat} — posterior means of
+#'         \eqn{\sigma^2}, \eqn{\tau}, and local shrinkage \eqn{\lambda_j}.
+#'   \item \code{BetaSamples}, \code{LambdaSamples}, \code{TauSamples}, \code{Sigma2Samples} —
+#'         MCMC draws post–burn-in.
+#'   \item \code{GammaSamples} — draws of the informative-set indicator \eqn{\gamma}.
+#'   \item \code{W0Samples}, \code{WA_Samples} — draws of auxiliary coefficients for
+#'         non-informative and informative sets, respectively.
+#'   \item \code{GammaSums} — inclusion counts for each auxiliary study across kept draws.
+#' }
+#'
+#' @examples
+#' # (Pseudo-code) Suppose X, y, and n.vec are prepared appropriately:
+#' # fit <- blast_select(X, y, n.vec, burn = 1000, iter = 3000)
+#' # str(fit$BetaHat)
 #'
 #' @export
-blast_select() <- function(X, y, n.vec, burn = 1000, iter = 3000, a = 1/5, b = 10,
-                                  s = 0.8, tau = 1, sigma2 = 1, w = 1, alpha = 0.05,
-                                  iterEBstep = 0, sir = TRUE, gamma_init = NULL, temp_scale = 1, adapt_temp_scale = FALSE){
+blast_select <- function(
+    X, y, n.vec,
+    burn = 1000, iter = 3000,
+    a = 1/5, b = 10,
+    s = 0.8, tau = 1, sigma2 = 1, w = 1, alpha = 0.05,
+    iterEBstep = 0, sir = TRUE,
+    gamma_init = NULL,
+    temp_scale = NULL) {
+  ## ----- Basic dimensions & bookkeeping -----
   p <- ncol(X)
-  N = sum(n.vec)
+  N <- sum(n.vec)
   K <- length(n.vec) - 1
-  # initialize gamma using sparsity index
-  if(is.null(gamma_init)){
-    candidate_sets <- construct_candidate_set(X= X, y = y, n.vec = n.vec)
+
+  ## Adaptive-tempering counters (used only if adapt_temp_scale = TRUE)
+  accepted_count <- 0L
+  total_gamma_proposals <- 0L
+  target_acceptance_rate <- 0.3
+
+  ## ----- Initialize gamma (informative-set indicator) -----
+  if (is.null(gamma_init)) {
+    candidate_sets <- construct_candidate_set(X = X, y = y, n.vec = n.vec)
     gamma <- rep(0, K)
     gamma[candidate_sets[[1]]] <- 1
-  } else{
+  } else {
     gamma <- gamma_init
   }
 
-  # gamma <- gamma_init
-  # Target Data setup
+  if(is.null(temp_scale)){
+    temp_scale <- 1 / p
+    adapt_temp_scale <- TRUE
+  } else{
+    adapt_temp_scale <- FALSE
+  }
+
+  ## ----- Partition target vs. auxiliary -----
   n0 <- n.vec[1]
-  N_k = N - n0
-  X_0 <- X[1:n0, ]
+  N_k <- N - n0
+  X_0 <- X[1:n0, , drop = FALSE]
   y_0 <- y[1:n0]
+
+  ## Target prior state
   eta_0 <- rep(1, p)
-  xi_0 <- tau^(-2)
-  Q0 <- t(X_0) %*% X_0
+  xi_0  <- tau^(-2)
+  Q0    <- crossprod(X_0)
   sigma2_0 <- 1
-  kappa_0 <- -0.5
-  # Auxilliary Data setup
-  etaA <- rep(1, p)
-  xiA <- tau^(-2)
+  kappa_0  <- -0.5
+
+  ## Auxiliary prior state
+  etaA      <- rep(1, p)
+  xiA       <- tau^(-2)
   eta_A_bar <- rep(1, p)
-  xi_A_bar <- tau^(-2)
-  wA_new <- rep(0, p)
-  # gamma_prior_probs <- n.vec[2:(K+1)] / sum(n.vec[2:(K+1)])
+  xi_A_bar  <- tau^(-2)
+  wA_new    <- rep(0, p)
+
+  ## Gamma prior
   gamma_prior_probs <- rep(0.5, K)
-  sigma2_A <- 1
-  sigma2_A_bar <- 1
-  kappa_A <- -0.5
-  kappa_A_bar <- -0.5
-  samp_size_A <- NULL
-  samp_size_A_bar <- NULL
-  # storage setup
+
+  ## Auxiliary likelihood variances & kappas
+  sigma2_A      <- 1
+  sigma2_A_bar  <- 1
+  kappa_A       <- -0.5
+  kappa_A_bar   <- -0.5
+
+  ## Storage
   nmc <- burn + iter
-  xi_0out <- rep(0, nmc)
-  xiA_out <- rep(0, nmc)
-  xiA_bar_out <- rep(0, nmc)
-  sigma2_0out <- rep(0, nmc)
-  sigma2_Aout <- rep(0, nmc)
+  xi_0out          <- rep(0, nmc)
+  xiA_out          <- rep(0, nmc)
+  xiA_bar_out      <- rep(0, nmc)
+  sigma2_0out      <- rep(0, nmc)
+  sigma2_Aout      <- rep(0, nmc)
   sigma2_A_bar_out <- rep(0, nmc)
-  betaout <- matrix(0, nrow = nmc, ncol = p)
-  wAout <- matrix(0, nrow = nmc, ncol = p)
-  w0out <- matrix(0, nrow = nmc, ncol = p)
-  deltaout <- matrix(0, nrow = nmc, ncol = p)
-  gammaout <- matrix(0, nrow = nmc, ncol = K)
-  etaout <- matrix(0, nrow = nmc, ncol = p)
-  sigma2_0out <- rep(0, nmc)
-  log_diff_values <- matrix(NA, nrow = nmc, ncol = K)
-  eb_counter = 0
-  # Alias for X0tX0
+  betaout          <- matrix(0, nrow = nmc, ncol = p)
+  wAout            <- matrix(0, nrow = nmc, ncol = p)
+  w0out            <- matrix(0, nrow = nmc, ncol = p)
+  deltaout         <- matrix(0, nrow = nmc, ncol = p)
+  gammaout         <- matrix(0, nrow = nmc, ncol = K)
+  etaout           <- matrix(0, nrow = nmc, ncol = p)
+
+  ## Helpful aliases for target sufficient stats
   X0_X0_t <- Q0
-  X0_y0 <- t(X_0) %*% y_0
-  # Precompute XtX Xty for aux studies
+  X0_y0   <- crossprod(X_0, y_0)
+
+  ## Precompute per-study XtX and Xty for auxiliaries
   precomp <- precompute_XtXXty(X, y, K, n.vec)
+
+  ## ----- Optional empirical Bayes (target-only warm-start) -----
   EB <- iterEBstep != 0
-  # Empirical bayes on the target data alone
-  if(EB){
+  if (EB) {
     EB_burn <- 1000
     EB_step_total <- iterEBstep + EB_burn
-    # get horseshoe samples from target only
-    eb_beta_samples <- matrix(0, nrow = EB_step_total + 1, ncol = p)
-    eb_eta_samples <- matrix(0, nrow = EB_step_total + 1, ncol = p)
-    eb_xi_samples <- rep(0, EB_step_total + 1)
+
+    eb_beta_samples   <- matrix(0, nrow = EB_step_total + 1, ncol = p)
+    eb_eta_samples    <- matrix(0, nrow = EB_step_total + 1, ncol = p)
+    eb_xi_samples     <- rep(0, EB_step_total + 1)
     eb_sigma2_samples <- rep(0, EB_step_total + 1)
-    # set initial values
-    eb_beta_samples[1, ] <- rep(0, p)
-    eb_eta_samples[1, ] <- rep(1, p)
-    eb_xi_samples[1] <- xi_0
+
+    eb_beta_samples[1, ] <- 0
+    eb_eta_samples[1, ]  <- 1
+    eb_xi_samples[1]     <- xi_0
     eb_sigma2_samples[1] <- sigma2_0
-    for(j in 2:(EB_step_total + 1)){
-      targ_sample <- exact_horseshoe_gibbs_step(X_0, y_0, eta = eb_eta_samples[j-1, ], xi = eb_xi_samples[j-1],
-                                                Q = Q0, w = w, s = s, a = a, b = b, p = p, sigma2 = eb_sigma2_samples[j-1],
-                                                kappa = kappa_0, EB = FALSE)
-      eb_beta_samples[j, ] <- targ_sample$new_beta
-      eb_eta_samples[j, ] <- targ_sample$new_eta
-      eb_xi_samples[j] <- targ_sample$new_xi
-      eb_sigma2_samples[j] <- targ_sample$new_sigma2
-    }
-    tmp <- eb_em_max(kappa = kappa_0, N = n0, xi_out = eb_xi_samples[(EB_burn+1):(EB_step_total+1)],
-                     sigma2_out = eb_sigma2_samples[(EB_burn+1):(EB_step_total+1)],
-                     iterEBstep = iterEBstep, eb_counter = 0, sir = sir, i = iterEBstep)
-    kappa_A <- tmp$kappa
-    #kappa_A_bar <- tmp$kappa
-    kappa_0 <- tmp$kappa
-    if(tmp$kappa > 0){
-      kappa_0 <- tmp$kappa / 10
-      kappa_A_bar <- tmp$kappa *1.5
-    } else{
-      kappa_0 <- tmp$kappa * 1.2
-      kappa_A_bar <- tmp$kappa / 2
+
+    for (j in 2:(EB_step_total + 1)) {
+      targ_sample <- exact_horseshoe_gibbs_step(
+        X_0, y_0,
+        eta = eb_eta_samples[j - 1, ], xi = eb_xi_samples[j - 1],
+        Q = Q0, w = w, s = s, a = a, b = b, p = p,
+        sigma2 = eb_sigma2_samples[j - 1],
+        kappa = kappa_0, EB = FALSE
+      )
+      eb_beta_samples[j, ]   <- targ_sample$new_beta
+      eb_eta_samples[j, ]    <- targ_sample$new_eta
+      eb_xi_samples[j]       <- targ_sample$new_xi
+      eb_sigma2_samples[j]   <- targ_sample$new_sigma2
     }
 
+    tmp <- eb_em_max(
+      kappa = kappa_0, N = n0,
+      xi_out = eb_xi_samples[(EB_burn + 1):(EB_step_total + 1)],
+      sigma2_out = eb_sigma2_samples[(EB_burn + 1):(EB_step_total + 1)],
+      iterEBstep = iterEBstep, eb_counter = 0,
+      sir = sir, i = iterEBstep
+    )
+
+    kappa_A <- tmp$kappa
+    kappa_0 <- tmp$kappa
+    if (tmp$kappa > 0) {
+      kappa_0     <- tmp$kappa / 10
+      kappa_A_bar <- tmp$kappa * 1.5
+    } else {
+      kappa_0     <- tmp$kappa * 1.2
+      kappa_A_bar <- tmp$kappa / 2
+    }
     print(kappa_A)
   }
-  # Start MCMC
-  for(i in 1:nmc){
-    # Set up indices according to the gamma vector
+
+  ## =======================
+  ## =       MCMC         =
+  ## =======================
+  for (i in 1:nmc) {
+
+    ## (1) Set indices based on current gamma
     data_inds <- set_data_inds(gamma, n.vec)
     ind.kA <- data_inds$ind.kA
     ind.ni <- data_inds$ind.ni
-    aux_num_ind.kA <- as.logical(gamma)
-    aux_num_ind.ni <- !aux_num_ind.kA
-    ### Individual updates
-    # bias update
-    delta_samp <- exact_horseshoe_gibbs_step(X_0, y_0 - X_0 %*% wA_new, eta = eta_0, xi = xi_0, Q = Q0,
-                                             w = w, s = s, a = a, b = b, p = p, sigma2 = sigma2_0, kappa = kappa_0,
-                                             EB = EB, kappa_0_trans = TRUE) #xiA_trunc = TRUE, xiA_trunc_val = xiA)
-    #, trunc_val = log(xiA))
-    # extract results for target
+
+    ## (2) Update target delta given current wA_new
+    delta_samp <- exact_horseshoe_gibbs_step(
+      X_0, y_0 - X_0 %*% wA_new,
+      eta = eta_0, xi = xi_0, Q = Q0,
+      w = w, s = s, a = a, b = b, p = p,
+      sigma2 = sigma2_0, kappa = kappa_0,
+      EB = EB, kappa_0_trans = TRUE
+    )
     delta_new <- delta_samp$new_beta
-    xi_0 <- delta_samp$new_xi
-    #xi_0 <- 50
-    sigma2_0 <- delta_samp$new_sigma2
-    # eta update target
-    eta_0 <- delta_samp$new_eta
-    ## sample w1, aux regression coefficient for informative samples
-    if(data_inds$informative){
-      X_A <- X[ind.kA, ]
-      y_A <- y[ind.kA]
+    xi_0      <- delta_samp$new_xi
+    sigma2_0  <- delta_samp$new_sigma2
+    eta_0     <- delta_samp$new_eta
+
+    ## (3) Update auxiliary coefficients for informative set
+    if (data_inds$informative) {
+      X_A  <- X[ind.kA, , drop = FALSE]
+      y_A  <- y[ind.kA]
       newX <- rbind(X_0, X_A)
       newy <- c(y_0 - X_0 %*% delta_new, y_A)
-      Q <- crossprod(newX)
-      #Q_A <- add_matrices(precomp$list_XtX[aux_num_ind.kA])
-    } else{
-      # sample some random target data to fill in the gap
-      pseudo_inds <- sample(1:n0, size = floor(0.05*n0))
-      newX <- X[pseudo_inds, ]
+      Q    <- crossprod(newX)
+    } else {
+      pseudo_inds <- sample(1:n0, size = floor(0.05 * n0))
+      newX <- X[pseudo_inds, , drop = FALSE]
       newy <- y[pseudo_inds]
-      # newX <- rbind(X_0, X_A)
-      # newy <- c(y_0 - X_0 %*% delta_new, y_A)
-      # y_A = 0
-      # X_A = t(rep(0, p))
-      # newX <- t(rep(0, p))
-      # newy <- 0
-      # newX <- X_0
-      # newy <- y_0 - X_0 %*% delta_new
-      # Q <- crossprod(X_0)
-      Q <- crossprod(newX)
-
+      Q    <- crossprod(newX)
     }
-    # Auxiliary coefficient update for informative samples
 
-    wA_samp <- exact_horseshoe_gibbs_step(X = newX, y = newy, eta = etaA, xi = xiA, Q = Q,
-                                          w = w, s = s, a = a, b = b, p = p, sigma2 = sigma2_A, kappa = kappa_A,
-                                          EB = EB)
-    # extract results for informative
-    wA_new <- wA_samp$new_beta
-    xiA <- wA_samp$new_xi
-    #xiA <- 100
-    # xiA <-sum(n.vec[2:(K+1)]) / 4 # fix at "truth" -- tau = no. of signals / sample size
+    wA_samp <- exact_horseshoe_gibbs_step(
+      X = newX, y = newy,
+      eta = etaA, xi = xiA, Q = Q,
+      w = w, s = s, a = a, b = b, p = p,
+      sigma2 = sigma2_A, kappa = kappa_A, EB = EB
+    )
+    wA_new   <- wA_samp$new_beta
+    xiA      <- wA_samp$new_xi
     sigma2_A <- wA_samp$new_sigma2
-    # eta update informative
-    etaA <- wA_samp$new_eta
-    #eta_A <- c(rep(0.1, 16), rep(5, p-16))
-
+    etaA     <- wA_samp$new_eta
     wAout[i, ] <- wA_new
 
-    ## sample w0, aux regression coefficient for non-informative samples
-    if(data_inds$noninformative){
-      # if non-informative set is not empty, then access the data at the indices
-      X_A_bar <- X[ind.ni, ]
+    ## (4) Update auxiliary coefficients for non-informative set
+    if (data_inds$noninformative) {
+      X_A_bar <- X[ind.ni, , drop = FALSE]
       y_A_bar <- y[ind.ni]
-      Q_A_bar <- t(X_A_bar) %*% X_A_bar
-      #Q_A_bar <- add_matrices(precomp$list_XtX[aux_num_ind.ni])
-    } else{
-      # if non-informative set is empty, set y_A_bar and X_A_bar to 0 vectors
-      # randomly sample some auxiliary data to fill in the gap
-      pseudo_inds <- sample((n0 + 1):N, size = floor(0.03*N_k))
-      y_A_bar <- y[sample(pseudo_inds)] # shuffled y's to make it more realistic
-      X_A_bar <- X[pseudo_inds, ]
-      # y_A_bar = 0
-      # X_A_bar = t(rep(0, p))
-      Q_A_bar <- t(X_A_bar) %*% X_A_bar
+      Q_A_bar <- crossprod(X_A_bar)
+    } else {
+      pseudo_inds <- sample((n0 + 1):N, size = floor(0.03 * N_k))
+      y_A_bar     <- y[sample(pseudo_inds)]
+      X_A_bar     <- X[pseudo_inds, , drop = FALSE]
+      Q_A_bar     <- crossprod(X_A_bar)
     }
 
-    w0_samp <- exact_horseshoe_gibbs_step(X_A_bar, y_A_bar, eta = eta_A_bar, xi = xi_A_bar, Q = Q_A_bar,
-                                          w = w, s = s, a = a, b = b, p = p, sigma2 = sigma2_A_bar, kappa = kappa_A_bar,
-                                          EB = EB, kappa_A_bar_trans = TRUE)
-    # extract results for non-informative
-    w0_new <- w0_samp$new_beta
-    xi_A_bar <- w0_samp$new_xi
+    w0_samp <- exact_horseshoe_gibbs_step(
+      X_A_bar, y_A_bar,
+      eta = eta_A_bar, xi = xi_A_bar, Q = Q_A_bar,
+      w = w, s = s, a = a, b = b, p = p,
+      sigma2 = sigma2_A_bar, kappa = kappa_A_bar,
+      EB = EB, kappa_A_bar_trans = TRUE
+    )
+    w0_new       <- w0_samp$new_beta
+    xi_A_bar     <- w0_samp$new_xi
     sigma2_A_bar <- w0_samp$new_sigma2
-    # eta update non-informative
-    eta_A_bar <- w0_samp$new_eta
-    w0out[i, ] <- w0_new
+    eta_A_bar    <- w0_samp$new_eta
+    w0out[i, ]   <- w0_new
 
+    ## (5) Compose beta and save partial draws
     deltaout[i, ] <- delta_new
-    # Sample beta
-    betaout[i, ] <- wA_new + delta_new
-    # Prepare prior covariance matrices for posterior gammma probability calculation
-    # Sigma_A <- sigma2_A * (1 / xiA) * diag(1 / etaA)
-    # Sigma_delta <- sigma2_0 * (1 / xi_0) * diag(1 / eta_0)
-    # Sigma_A_bar <- sigma2_A_bar * (1 / xi_A_bar) * diag(1 / eta_A_bar)
-    Sigma_A <-  (1 / xiA) * diag(1 / etaA)
-    Sigma_delta <- (1 / xi_0) * diag(1 / eta_0)
+    betaout[i, ]  <- wA_new + delta_new
+
+    ## (6) Diagonal prior terms for marginal-likelihood γ update
+    Sigma_A     <- (1 / xiA)      * diag(1 / etaA)
+    Sigma_delta <- (1 / xi_0)     * diag(1 / eta_0)
     Sigma_A_bar <- (1 / xi_A_bar) * diag(1 / eta_A_bar)
-    # Precompute XtX and Xty's
-    # Compute the posterior probability of gamma for k = 1, ..., K using marginal likelihood method
-    # update order for gamma
-    #update_order <- sample(1:K)
-    #update_order <- 1:K
-    for(k in 1:K){
+
+    ## (7) Update gamma one coordinate at a time
+    for (k in 1:K) {
       gamma_tmp <- gamma
-      # Set appropriate indices where gamma_k = 1
+
+      ## Proposal: gamma_k = 1
       gamma_tmp[k] <- 1
       inds.tmp <- set_data_inds(gamma_tmp, n.vec)
-      # Check whether the non-informative set is empty
-      # If it is, set y_A_bar and X_A_bar to 0
-      # Note that informative set is not empty in this case
-      if(!inds.tmp$noninformative){
-        y_A_bar = 0
-        X_A_bar = t(rep(0, p))
-        # pseudo_inds <- sample((n0 + 1):N, size = floor(0.02*N_k))
-        # y_A_bar <- y[sample(pseudo_inds)] # shuffled y's
-        # X_A_bar <- X[pseudo_inds, ]
-      } else{
-        y_A_bar = y[inds.tmp$ind.ni]
-        X_A_bar = X[inds.tmp$ind.ni, ]
+      if (!inds.tmp$noninformative) {
+        yAb <- 0
+        XAb <- t(rep(0, p))
+      } else {
+        yAb <- y[inds.tmp$ind.ni]
+        XAb <- X[inds.tmp$ind.ni, , drop = FALSE]
       }
+
       aux_num_ind.kA <- as.logical(gamma_tmp)
       aux_num_ind.ni <- !aux_num_ind.kA
-      precomp_XtX_A <- precomp$list_XtX[aux_num_ind.kA]
-      precomp_Xty_A <- precomp$list_Xty[aux_num_ind.kA]
-      precomp_XtX_A_bar <- precomp$list_XtX[aux_num_ind.ni]
-      precomp_Xty_A_bar <- precomp$list_Xty[aux_num_ind.ni]
-      gamma_prior_prob = gamma_prior_probs[k]
+      precomp_XtX_A     <- precomp$list_XtX[aux_num_ind.kA]
+      precomp_Xty_A     <- precomp$list_Xty[aux_num_ind.kA]
+      precomp_XtX_Ab    <- precomp$list_XtX[aux_num_ind.ni]
+      precomp_Xty_Ab    <- precomp$list_Xty[aux_num_ind.ni]
 
-      log_p1 <- log_marginal_likelihood_marg_sig(
-        y0 = y_0,
-        yA = y[inds.tmp$ind.kA],
-        yAb = y_A_bar,
-        X0 = X_0,
-        XA = X[inds.tmp$ind.kA, ],
-        XAb = X_A_bar,
-        #delta = delta_new,
-        d_A = diag(Sigma_A),
-        d_Ab = diag(Sigma_A_bar),
-        d_delta = diag(Sigma_delta),
-        X0_X0_t = X0_X0_t,
-        X0_y0 = X0_y0,
-        precomp_XtX_A = precomp_XtX_A,
-        precomp_Xty_A = precomp_Xty_A,
-        precomp_XtX_Ab = precomp_XtX_A_bar,
-        precomp_Xty_Ab = precomp_Xty_A_bar,
-        informative = inds.tmp$informative,
-        noninformative = inds.tmp$noninformative
+      log_p1 <- log_marginal_likelihood(
+        y0 = y_0, yA = y[inds.tmp$ind.kA], yAb = yAb,
+        X0 = X_0, XA = X[inds.tmp$ind.kA, , drop = FALSE], XAb = XAb,
+        d_A = diag(Sigma_A), d_Ab = diag(Sigma_A_bar), d_delta = diag(Sigma_delta),
+        X0_X0_t = X0_X0_t, X0_y0 = X0_y0,
+        precomp_XtX_A = precomp_XtX_A, precomp_Xty_A = precomp_Xty_A,
+        precomp_XtX_Ab = precomp_XtX_Ab, precomp_Xty_Ab = precomp_Xty_Ab,
+        informative = inds.tmp$informative, noninformative = inds.tmp$noninformative
       )
-      # Set appropriate indices where gamma_k = 0
+
+      ## Proposal: gamma_k = 0
       gamma_tmp[k] <- 0
       aux_num_ind.kA <- as.logical(gamma_tmp)
       aux_num_ind.ni <- !aux_num_ind.kA
-      precomp_XtX_A <- precomp$list_XtX[aux_num_ind.kA]
-      precomp_Xty_A <- precomp$list_Xty[aux_num_ind.kA]
-      precomp_XtX_A_bar <- precomp$list_XtX[aux_num_ind.ni]
-      precomp_Xty_A_bar <- precomp$list_Xty[aux_num_ind.ni]
+      precomp_XtX_A     <- precomp$list_XtX[aux_num_ind.kA]
+      precomp_Xty_A     <- precomp$list_Xty[aux_num_ind.kA]
+      precomp_XtX_Ab    <- precomp$list_XtX[aux_num_ind.ni]
+      precomp_Xty_Ab    <- precomp$list_Xty[aux_num_ind.ni]
       inds.tmp <- set_data_inds(gamma_tmp, n.vec)
-      # Follow the same procedure as above
-      if(!inds.tmp$informative){
-        y_A = 0
-        X_A = t(rep(0, p))
-      } else{
-        y_A = y[inds.tmp$ind.kA]
-        X_A = X[inds.tmp$ind.kA, ]
+
+      if (!inds.tmp$informative) {
+        yA_prop <- 0
+        XA_prop <- t(rep(0, p))
+      } else {
+        yA_prop <- y[inds.tmp$ind.kA]
+        XA_prop <- X[inds.tmp$ind.kA, , drop = FALSE]
       }
-      log_p0 <- log_marginal_likelihood_marg_sig(
-        y0 = y_0,
-        yA = y_A,
-        yAb = y[inds.tmp$ind.ni],
-        X0 = X_0,
-        XA = X_A,
-        XAb = X[inds.tmp$ind.ni, ],
-        #delta = delta_new,
-        d_A = diag(Sigma_A),
-        d_Ab = diag(Sigma_A_bar),
-        d_delta = diag(Sigma_delta),
-        X0_X0_t = X0_X0_t,
-        X0_y0 = X0_y0,
-        precomp_XtX_A = precomp_XtX_A,
-        precomp_Xty_A = precomp_Xty_A,
-        precomp_XtX_Ab = precomp_XtX_A_bar,
-        precomp_Xty_Ab = precomp_Xty_A_bar,
-        informative = inds.tmp$informative,
-        noninformative = inds.tmp$noninformative
+
+      log_p0 <- log_marginal_likelihood(
+        y0 = y_0, yA = yA_prop, yAb = y[inds.tmp$ind.ni],
+        X0 = X_0, XA = XA_prop, XAb = X[inds.tmp$ind.ni, , drop = FALSE],
+        d_A = diag(Sigma_A), d_Ab = diag(Sigma_A_bar), d_delta = diag(Sigma_delta),
+        X0_X0_t = X0_X0_t, X0_y0 = X0_y0,
+        precomp_XtX_A = precomp_XtX_A, precomp_Xty_A = precomp_Xty_A,
+        precomp_XtX_Ab = precomp_XtX_Ab, precomp_Xty_Ab = precomp_Xty_Ab,
+        informative = inds.tmp$informative, noninformative = inds.tmp$noninformative
       )
-      # Calculate the acceptance probability
-      # Normalize the log probabilities for numerical stability
-      probs <- normalize_log_probabilities(log_p1, log_p0, scale = temp_scale)
+
+      ## Convert to probabilities (with current temp_scale) & sample gamma_k
+      probs <- normalize_log_probabilities(log_p1 = log_p1, log_p0 = log_p0, scale = temp_scale)
       p1 <- probs[1]
-      p0 <- probs[2]
       gamma_old <- gamma[k]
       gamma[k] <- rbinom(1, 1, p1)
-      # if(all(gamma == 0)){
-      #   gamma[k] <- 1
-      # }
-      # if(all(gamma == 1)){
-      #   gamma[k] <- 0
-      # }
-      if(i %% 100 == 0){
-        cat("Gamma: ", k, "\n")
-        cat("Log P1: ", log_p1, "\n")
-        cat("Log P0: ", log_p0, "\n")
-        cat("Diff: ", log_p1 - log_p0, "\n")
-        cat("P1: ", p1, "\n")
+
+      ## Track acceptance for adaptive tempering
+      if (adapt_temp_scale) {
+        total_gamma_proposals <- total_gamma_proposals + 1L
+        if (gamma[k] != gamma_old) accepted_count <- accepted_count + 1L
       }
     }
-    # save results
-    gammaout[i, ] <- gamma
-    etaout[i, ] <- eta_0
-    xi_0out[i] <- xi_0
-    xiA_out[i] <- xiA
-    xiA_bar_out[i] <- xi_A_bar
-    sigma2_0out[i] <- sigma2_0
-    sigma2_Aout[i] <- sigma2_A
-    sigma2_A_bar_out[i] <- sigma2_A_bar
 
+    ## Save iteration-level outputs
+    gammaout[i, ]        <- gamma
+    etaout[i, ]          <- eta_0
+    xi_0out[i]           <- xi_0
+    xiA_out[i]           <- xiA
+    xiA_bar_out[i]       <- xi_A_bar
+    sigma2_0out[i]       <- sigma2_0
+    sigma2_Aout[i]       <- sigma2_A
+    sigma2_A_bar_out[i]  <- sigma2_A_bar
 
-    # print every 100 iterations
-    if(i %% 100 == 0){
-      cat("Iteration: ", i, "\n")
+    ## Adaptive tempering update (small, bounded, diminishing step)
+    if (adapt_temp_scale && total_gamma_proposals > 0L) {
+      acceptance_prob <- accepted_count / total_gamma_proposals
+      step_size <- 0.1 / sqrt(i)                # diminishing step
+      temp_scale <- temp_scale + step_size * (acceptance_prob - target_acceptance_rate)
+      temp_scale <- min(max(temp_scale, 1 / p^2), 10)  # clamp
+      # lightweight progress (comment out if too chatty)
+      # cat("Temp scale:", round(temp_scale, 4), " | acc:", round(acceptance_prob, 3), "\n")
     }
-  }
-  betaout <- betaout[(burn+1):nrow(betaout), ]
-  gammaout <- gammaout[(burn+1):nmc, ]
-  lambdaout <- 1/sqrt(etaout[(burn+1):nmc, ])
-  tauout <- 1/sqrt(xi_0out[(burn+1):nmc])
-  sigma2_0out <- sigma2_0out[(burn+1):nmc]
-  betahat <- apply(betaout, 2, mean)
-  betahat_median <- apply(betaout, 2, median)
-  lambdahat <- apply(lambdaout, 2, mean)
-  tauhat <- mean(tauout)
-  sigma2hat <- mean(sigma2_0out)
-  gammasums <- colSums(gammaout)
-  leftci <- apply(betaout, 2, stats::quantile, probs = alpha/2)
-  rightci <- apply(betaout, 2, stats::quantile, probs = 1-alpha/2)
-  result <- list(BetaHat = betahat, BetaHatMedian = betahat_median, LeftCI = leftci, RightCI = rightci,
-                 Sigma2Hat = sigma2hat, TauHat = tauhat, LambdaHat = lambdahat,
-                 BetaSamples = betaout, LambdaSamples = lambdaout,
-                 TauSamples = tauout, Sigma2Samples = sigma2_0out,
-                 GammaSamples = gammaout, W0Samples = w0out, WA_Samples = wAout,
-                 GammaSums = gammasums)
-  return(result)
 
+  }
+
+  ## ----- Post-processing: drop burn-in & summarize -----
+  kept_idx     <- (burn + 1):nmc
+  betaout      <- betaout[kept_idx, , drop = FALSE]
+  gammaout     <- gammaout[kept_idx, , drop = FALSE]
+  lambdaout    <- 1 / sqrt(etaout[kept_idx, , drop = FALSE])
+  tauout       <- 1 / sqrt(xi_0out[kept_idx])
+  sigma2_0keep <- sigma2_0out[kept_idx]
+
+  betahat         <- colMeans(betaout)
+  betahat_median  <- apply(betaout, 2, median)
+  lambdahat       <- colMeans(lambdaout)
+  tauhat          <- mean(tauout)
+  sigma2hat       <- mean(sigma2_0keep)
+  gammasums       <- colSums(gammaout)
+  leftci          <- apply(betaout, 2, stats::quantile, probs = alpha / 2)
+  rightci         <- apply(betaout, 2, stats::quantile, probs = 1 - alpha / 2)
+
+  result <- list(
+    BetaHat         = betahat,
+    BetaHatMedian   = betahat_median,
+    LeftCI          = leftci,
+    RightCI         = rightci,
+    Sigma2Hat       = sigma2hat,
+    TauHat          = tauhat,
+    LambdaHat       = lambdahat,
+    BetaSamples     = betaout,
+    LambdaSamples   = lambdaout,
+    TauSamples      = tauout,
+    Sigma2Samples   = sigma2_0keep,
+    GammaSamples    = gammaout,
+    W0Samples       = w0out,
+    WA_Samples      = wAout,
+    GammaSums       = gammasums
+  )
+
+  return(result)
 }

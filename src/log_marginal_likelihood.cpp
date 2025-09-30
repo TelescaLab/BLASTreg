@@ -5,7 +5,7 @@ using namespace arma;
 // [[Rcpp::depends(RcppArmadillo)]]
 
 // Robust log(det) computation with symmetry enforcement
-double safe_log_det2(const arma::mat& M, const std::string& label) {
+double safe_log_det(const arma::mat& M, const std::string& label) {
   arma::mat M_sym = 0.5 * (M + M.t());
   double val, sign;
   arma::log_det(val, sign, M_sym);
@@ -17,7 +17,7 @@ double safe_log_det2(const arma::mat& M, const std::string& label) {
 }
 
 // Helper to sum list of matrices
-arma::mat add_precomp_matrices2(const List& mats) {
+arma::mat add_precomp_matrices(const List& mats) {
   arma::mat sum = as<arma::mat>(mats[0]);
   for (int i = 1; i < mats.size(); ++i) {
     sum += as<arma::mat>(mats[i]);
@@ -25,7 +25,7 @@ arma::mat add_precomp_matrices2(const List& mats) {
   return sum;
 }
 
-arma::vec add_vectors2(const List& vecs) {
+arma::vec add_vectors(const List& vecs) {
   arma::vec sum = as<arma::vec>(vecs[0]);
   for (int i = 1; i < vecs.size(); ++i) {
     sum += as<arma::vec>(vecs[i]);
@@ -34,7 +34,7 @@ arma::vec add_vectors2(const List& vecs) {
 }
 
 // [[Rcpp::export]]
-double log_marginal_likelihood_marg_sig(
+double log_marginal_likelihood(
     const arma::vec& y0,
     const arma::vec& yA,
     const arma::vec& yAb,
@@ -65,16 +65,16 @@ double log_marginal_likelihood_marg_sig(
     XtX_A = XA.t() * XA;
     Xty_A = XA.t() * yA;
   } else {
-    XtX_A = add_precomp_matrices2(precomp_XtX_A);
-    Xty_A = add_vectors2(precomp_Xty_A);
+    XtX_A = add_precomp_matrices(precomp_XtX_A);
+    Xty_A = add_vectors(precomp_Xty_A);
   }
 
   if (!noninformative) {
     XtX_Ab = XAb.t() * XAb;
     Xty_Ab = XAb.t() * yAb;
   } else {
-    XtX_Ab = add_precomp_matrices2(precomp_XtX_Ab);
-    Xty_Ab = add_vectors2(precomp_Xty_Ab);
+    XtX_Ab = add_precomp_matrices(precomp_XtX_Ab);
+    Xty_Ab = add_vectors(precomp_Xty_Ab);
   }
 
   arma::vec inv_dA = 1.0 / (d_A + jitter);
@@ -92,7 +92,7 @@ double log_marginal_likelihood_marg_sig(
     //-0.5 * p * std::log(sigma2_Ab)
     + lgamma(0.5 * (nAb + p - 1))
     -0.5 * sum(log(d_Ab + jitter))
-    -0.5 * safe_log_det2(M_Ab, "M_Ab")
+    -0.5 * safe_log_det(M_Ab, "M_Ab")
     -0.5 * (nAb + p -1) * log(0.5 * (quad_Ab + 1));
 
 
@@ -112,8 +112,8 @@ double log_marginal_likelihood_marg_sig(
       //-0.5 * p * std::log(sigma2_0)
       -0.5 * sum(log(d_A + jitter))
       -0.5 * sum(log(d_delta + jitter))
-      -0.5 * safe_log_det2(M_A, "M_A")
-      -0.5 * safe_log_det2(M_delta, "M_delta");
+      -0.5 * safe_log_det(M_A, "M_A")
+      -0.5 * safe_log_det(M_delta, "M_delta");
 
       arma::vec M_A_X0_y0 = solve(M_A, X0_y0);
       arma::vec M_A_XA_yA = solve(M_A, Xty_A);
