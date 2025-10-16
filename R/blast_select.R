@@ -233,7 +233,7 @@ blast_select <- function(
       Q    <- crossprod(newX)
     } else {
       newX <- X_0
-      newy <- y_0
+      newy <- y_0 - X_0 %*% delta_new
       Q    <- crossprod(newX)
     }
 
