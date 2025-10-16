@@ -232,9 +232,8 @@ blast_select <- function(
       newy <- c(y_0 - X_0 %*% delta_new, y_A)
       Q    <- crossprod(newX)
     } else {
-      pseudo_inds <- sample(1:n0, size = floor(0.05 * n0))
-      newX <- X[pseudo_inds, , drop = FALSE]
-      newy <- y[pseudo_inds]
+      newX <- X_0
+      newy <- y_0
       Q    <- crossprod(newX)
     }
 
