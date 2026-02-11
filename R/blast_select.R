@@ -62,7 +62,7 @@
 #'
 #' fit <- blast_select(
 #'   X = df$X, y = df$y, n.vec = df$n.vec,
-#'   burn = 100, iter = 200, adapt_temp_scale = TRUE
+#'   burn = 1000, iter = 3000
 #' )
 #' str(fit$BetaHat)
 #' }
@@ -87,6 +87,13 @@ blast_select <- function(
   accepted_count <- 0L
   total_gamma_proposals <- 0L
   target_acceptance_rate <- 0.3
+
+  # empty objects for neutrality (IMPORTANT)
+  s <- var(y)
+  empty_y <- numeric(0)
+  empty_X <- matrix(0, nrow = 0, ncol = p)
+  a0 <- sqrt(N)
+  b0 <- s * (sqrt(N) + 1)
 
   ## ----- Initialize gamma (informative-set indicator) -----
   if (is.null(gamma_init)) {
@@ -257,26 +264,24 @@ blast_select <- function(
       X_A_bar <- X[ind.ni, , drop = FALSE]
       y_A_bar <- y[ind.ni]
       Q_A_bar <- crossprod(X_A_bar)
+      w0_samp <- exact_horseshoe_gibbs_step(
+        X_A_bar, y_A_bar,
+        eta = eta_A_bar, xi = xi_A_bar, Q = Q_A_bar,
+        w = w, s = s, a = a, b = b, p = p,
+        sigma2 = sigma2_A_bar, kappa = kappa_A_bar,
+        EB = EB
+      )
+      w0_new <- w0_samp$new_beta
+      xi_A_bar <- w0_samp$new_xi
+      sigma2_A_bar <- w0_samp$new_sigma2
+      eta_A_bar <- w0_samp$new_eta
     } else {
-      pseudo_inds <- sample((n0 + 1):N, size = floor(0.03 * N_k))
-      y_A_bar     <- y[sample(pseudo_inds)]
-      X_A_bar     <- X[pseudo_inds, , drop = FALSE]
-      Q_A_bar     <- crossprod(X_A_bar)
+      w0_new <- rep(0, p)
+      eta_A_bar <- rep(1, p)
+      xi_A_bar <- p^2
+      sigma2_A_bar <- 1 / rgamma(1, shape = a0, rate = b0)
     }
 
-    w0_samp <- exact_horseshoe_gibbs_step(
-      X = X_A_bar, y = y_A_bar,
-      eta = eta_A_bar, xi = xi_A_bar, Q = Q_A_bar,
-      w = w, s = s, a = a, b = b, p = p,
-      sigma2 = sigma2_A_bar, kappa = kappa_A_bar, EB = EB,
-      truncated_global_update = FALSE,
-      truncation_threshold = NULL
-    )
-
-    w0_new       <- w0_samp$new_beta
-    xi_A_bar     <- w0_samp$new_xi
-    sigma2_A_bar <- w0_samp$new_sigma2
-    eta_A_bar    <- w0_samp$new_eta
     w0out[i, ]   <- w0_new
 
     ## (5) Compose beta and save partial draws
@@ -291,45 +296,25 @@ blast_select <- function(
     ## (7) Update gamma one coordinate at a time
     for (k in 1:K) {
       gamma_tmp <- gamma
-
-      ## Proposal: gamma_k = 1
-      gamma_tmp[k] <- 1
+      gamma_old <- gamma[k]
       inds.tmp <- set_data_inds(gamma_tmp, n.vec)
-      if (!inds.tmp$noninformative) {
-        yAb <- 0
-        XAb <- t(rep(0, p))
-      } else {
-        yAb <- y[inds.tmp$ind.ni]
-        XAb <- X[inds.tmp$ind.ni, , drop = FALSE]
-      }
 
-      aux_num_ind.kA <- as.logical(gamma_tmp)
-      aux_num_ind.ni <- !aux_num_ind.kA
-      precomp_XtX_A     <- precomp$list_XtX[aux_num_ind.kA]
-      precomp_Xty_A     <- precomp$list_Xty[aux_num_ind.kA]
-      precomp_XtX_Ab    <- precomp$list_XtX[aux_num_ind.ni]
-      precomp_Xty_Ab    <- precomp$list_Xty[aux_num_ind.ni]
-
-      log_p1 <- log_marginal_likelihood(
-        y0 = y_0, yA = y[inds.tmp$ind.kA], yAb = yAb,
-        X0 = X_0, XA = X[inds.tmp$ind.kA, , drop = FALSE], XAb = XAb,
-        d_A = diag(Sigma_A), d_Ab = diag(Sigma_A_bar), d_delta = diag(Sigma_delta),
-        X0_X0_t = X0_X0_t, X0_y0 = X0_y0,
-        precomp_XtX_A = precomp_XtX_A, precomp_Xty_A = precomp_Xty_A,
-        precomp_XtX_Ab = precomp_XtX_Ab, precomp_Xty_Ab = precomp_Xty_Ab,
-        informative = inds.tmp$informative, noninformative = inds.tmp$noninformative
+      log_p0 <- approx_marginal_likelihood(
+        y0 = y_0, yA = y[inds.tmp$ind.kA], yAb = y[inds.tmp$ind.ni],
+        X0 = X_0, XA = X[inds.tmp$ind.kA, , drop = FALSE], XAb = X[inds.tmp$ind.ni, , drop = FALSE],
+        d_A = diag(Sigma_A), d_Ab = diag(Sigma_A_bar), d_delta = diag(Sigma_delta)
       )
-
-      ## Proposal: gamma_k = 0
-      gamma_tmp[k] <- 0
+      # proposal ---------------------------
+      gamma_tmp[k] <- abs(gamma[k] - 1)
+      #
       aux_num_ind.kA <- as.logical(gamma_tmp)
       aux_num_ind.ni <- !aux_num_ind.kA
       precomp_XtX_A     <- precomp$list_XtX[aux_num_ind.kA]
       precomp_Xty_A     <- precomp$list_Xty[aux_num_ind.kA]
       precomp_XtX_Ab    <- precomp$list_XtX[aux_num_ind.ni]
       precomp_Xty_Ab    <- precomp$list_Xty[aux_num_ind.ni]
+      #
       inds.tmp <- set_data_inds(gamma_tmp, n.vec)
-
       if (!inds.tmp$informative) {
         yA_prop <- 0
         XA_prop <- t(rep(0, p))
@@ -338,29 +323,37 @@ blast_select <- function(
         XA_prop <- X[inds.tmp$ind.kA, , drop = FALSE]
       }
 
-      log_p0 <- log_marginal_likelihood(
-        y0 = y_0, yA = yA_prop, yAb = y[inds.tmp$ind.ni],
-        X0 = X_0, XA = XA_prop, XAb = X[inds.tmp$ind.ni, , drop = FALSE],
-        d_A = diag(Sigma_A), d_Ab = diag(Sigma_A_bar), d_delta = diag(Sigma_delta),
-        X0_X0_t = X0_X0_t, X0_y0 = X0_y0,
-        precomp_XtX_A = precomp_XtX_A, precomp_Xty_A = precomp_Xty_A,
-        precomp_XtX_Ab = precomp_XtX_Ab, precomp_Xty_Ab = precomp_Xty_Ab,
-        informative = inds.tmp$informative, noninformative = inds.tmp$noninformative
+      log_p1 <- approx_marginal_likelihood(
+        y0 = y_0, yA = y[inds.tmp$ind.kA], yAb = y[inds.tmp$ind.ni],
+        X0 = X_0, XA = X[inds.tmp$ind.kA, , drop = FALSE], XAb = X[inds.tmp$ind.ni, , drop = FALSE],
+        d_A = diag(Sigma_A), d_Ab = diag(Sigma_A_bar), d_delta = diag(Sigma_delta)
       )
+      # ML ratio ----------------------------------
+      if(i < burn*0.9){
+        ratio = (log_p1/p - log_p0/p)*sqrt(i+1)
+      }else{
+        ratio = log_p1 - log_p0
+      }
+      # MH Acceptance -----------------------------
+      if(log(runif(1)) < ratio) gamma[k] <- gamma_tmp[k]
 
-      ## Convert to probabilities (with current temp_scale) & sample gamma_k
-      probs <- normalize_log_probabilities(log_p1 = log_p1, log_p0 = log_p0, scale = temp_scale)
-      p1 <- probs[1]
-      gamma_old <- gamma[k]
-      gamma[k] <- rbinom(1, 1, p1)
+
+
 
       ## Track acceptance for adaptive tempering
       if (adapt_temp_scale) {
         total_gamma_proposals <- total_gamma_proposals + 1L
         if (gamma[k] != gamma_old) accepted_count <- accepted_count + 1L
       }
+
+
     }
 
+    # END DT Edits ------------------------------
+
+    if(i %% 100 == 0){
+      cat("Iter:", i, "\n")
+    }
     ## Save iteration-level outputs
     gammaout[i, ]        <- gamma
     etaout[i, ]          <- eta_0
@@ -376,7 +369,7 @@ blast_select <- function(
       acceptance_prob <- accepted_count / total_gamma_proposals
       step_size <- 0.1 / sqrt(i)                # diminishing step
       temp_scale <- temp_scale + step_size * (acceptance_prob - target_acceptance_rate)
-      temp_scale <- min(max(temp_scale, 1 / p^2), 10)  # clamp
+      temp_scale <- min(max(temp_scale, 1 / p^2), 1.0)  # clamp
       # lightweight progress (comment out if too chatty)
       # cat("Temp scale:", round(temp_scale, 4), " | acc:", round(acceptance_prob, 3), "\n")
     }
