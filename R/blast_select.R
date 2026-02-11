@@ -83,11 +83,6 @@ blast_select <- function(
   N <- sum(n.vec)
   K <- length(n.vec) - 1
 
-  ## Adaptive-tempering counters (used only if adapt_temp_scale = TRUE)
-  accepted_count <- 0L
-  total_gamma_proposals <- 0L
-  target_acceptance_rate <- 0.3
-
   # empty objects for neutrality (IMPORTANT)
   s <- var(y)
   empty_y <- numeric(0)
@@ -102,13 +97,6 @@ blast_select <- function(
     gamma[candidate_sets[[1]]] <- 1
   } else {
     gamma <- gamma_init
-  }
-
-  if(is.null(temp_scale)){
-    temp_scale <- 1 / p
-    adapt_temp_scale <- TRUE
-  } else{
-    adapt_temp_scale <- FALSE
   }
 
   ## ----- Partition target vs. auxiliary -----
@@ -340,13 +328,6 @@ blast_select <- function(
 
 
 
-      ## Track acceptance for adaptive tempering
-      if (adapt_temp_scale) {
-        total_gamma_proposals <- total_gamma_proposals + 1L
-        if (gamma[k] != gamma_old) accepted_count <- accepted_count + 1L
-      }
-
-
     }
 
     # END DT Edits ------------------------------
@@ -363,16 +344,6 @@ blast_select <- function(
     sigma2_0out[i]       <- sigma2_0
     sigma2_Aout[i]       <- sigma2_A
     sigma2_A_bar_out[i]  <- sigma2_A_bar
-
-    ## Adaptive tempering update (small, bounded, diminishing step)
-    if (adapt_temp_scale && total_gamma_proposals > 0L) {
-      acceptance_prob <- accepted_count / total_gamma_proposals
-      step_size <- 0.1 / sqrt(i)                # diminishing step
-      temp_scale <- temp_scale + step_size * (acceptance_prob - target_acceptance_rate)
-      temp_scale <- min(max(temp_scale, 1 / p^2), 1.0)  # clamp
-      # lightweight progress (comment out if too chatty)
-      # cat("Temp scale:", round(temp_scale, 4), " | acc:", round(acceptance_prob, 3), "\n")
-    }
 
   }
 
