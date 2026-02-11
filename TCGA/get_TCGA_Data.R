@@ -8,7 +8,7 @@ library(tidyr)
 # library(reshape2)
 
 # --- Load gene panel definitions (Cancer Gene List TSV) ---
-CGL <- data.table::fread("TCGA_TMB/cancerGeneList.tsv", sep = "\t")
+CGL <- data.table::fread("TCGA/cancerGeneList.tsv", sep = "\t")
 q_genes_MSK   <- CGL[`MSK-IMPACT` == "Yes", `Hugo Symbol`]
 q_genes_F1CDX <- CGL[`FOUNDATION ONE` == "Yes", `Hugo Symbol`]
 
