@@ -24,10 +24,10 @@ set.seed(123)
 
 ### Simulating data for the Oracle case
 ```{r}
-M <- 8
-n.vec.A <- c(120, rep(120, M))   # target first, then M auxiliaries
+M <- 5
+n.vec.A <- c(150, rep(150, M))   # target first, then M auxiliaries
 p  <- 80              # number of predictors
-s  <- 5                # number of non-zero betas in target
+s  <- 4                # number of non-zero betas in target
 size.A0.A <- M                    # all auxiliaries informative
 
 dfA <- simulate_multistudy_regression(
@@ -58,16 +58,16 @@ str(fit_oracle$BetaHat)
 
 ### Simulating data for the Selection case
 ```{r}
-M <- 10
-n.vec.B <- c(120, rep(120, M))
+M <- 5
+n.vec.B <- c(150, rep(150, M))
 p  <- 80
-s  <- 5
-size.A0.B <- 4                   # fewer informative than total
+s  <- 4
+size.A0.B <- 3                # fewer informative than total
 
 dfB <- simulate_multistudy_regression(
   p = p, s = s, M = M, size.A0 = size.A0.B, n.vec = n.vec.B,
-  sig.beta = 0.5, sig.delta1 = 0.3, sig.delta2 = 1.0,
-  contam_pct = 0.01, type = "gaussian"
+  sig.beta = 0.5, sig.delta1 = 0.3, sig.delta2 = 0.5,
+  contam_pct = 0.02, type = "gaussian"
 )
 
 K.B <- length(n.vec.B) - 1
@@ -76,12 +76,15 @@ true_A_idx <- if (!is.null(dfB$A_idx)) dfB$A_idx else seq_len(size.A0.B)
 
 ### Fitting the model using BLAST with Source Selection
 ```{r}
+print_progress <- FALSE # change to TRUE to see progress of MCMC sampling
 fit_select <- BLASTreg::blast_select(
   X = dfB$X, y = dfB$y, n.vec = dfB$n.vec,
-  burn = 1000, iter = 3000,
+  burn = 1000, iter = 3000, 
   a = 1/5, b = 10, s = 0.8,
-  tau = 1, sigma2 = 1, w = 1, alpha = 0.05)
+  tau = 1, sigma2 = 1, w = 1, alpha = 0.05,
+  print_progress = print_progress)
 
+str(fit_select$BetaHat)
 ```
 
 ### Posterior inclusion probabilities

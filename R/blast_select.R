@@ -36,6 +36,7 @@
 #' @param enforce_delta_stronger_shrinkage Logical; if TRUE, the global proposal
 #'   for the target “contrast” block (delta) is lower-truncated at the current
 #'   global scale of the informative/source block, enforcing xi_delta ≥ xi_source.
+#' @param print_progress Logical; if TRUE, prints iteration number every 100 iterations.
 #'
 #' @return
 #' A list with posterior summaries and draws:
@@ -76,7 +77,8 @@ blast_select <- function(
     iterEBstep = 0,
     gamma_init = NULL,
     temp_scale = NULL,
-    enforce_delta_stronger_shrinkage = FALSE
+    enforce_delta_stronger_shrinkage = FALSE,
+    print_progress = FALSE
 ) {
   ## ----- Basic dimensions & bookkeeping -----
   p <- ncol(X)
@@ -167,7 +169,7 @@ blast_select <- function(
     eb_sigma2_samples[1] <- sigma2_0
 
     for (j in 2:(EB_step_total + 1)) {
-      targ_sample <- exact_horseshoe_gibbs_step(
+      targ_sample <- exact_horseshoe_step(
         X_0, y_0,
         eta = eb_eta_samples[j - 1, ], xi = eb_xi_samples[j - 1],
         Q = Q0, w = w, s = s, a = a, b = b, p = p,
@@ -204,7 +206,7 @@ blast_select <- function(
     ind.ni <- data_inds$ind.ni
 
     ## (2) Update target delta given current wA_new
-    delta_samp <- exact_horseshoe_gibbs_step(
+    delta_samp <- exact_horseshoe_step(
       X = X_0,
       y = y_0 - X_0 %*% wA_new,
       eta = eta_0, xi = xi_0, Q = Q0,
@@ -232,7 +234,7 @@ blast_select <- function(
       Q    <- crossprod(newX)
     }
 
-    wA_samp <- exact_horseshoe_gibbs_step(
+    wA_samp <- exact_horseshoe_step(
       X = newX, y = newy,
       eta = etaA, xi = xiA, Q = Q,
       w = w, s = s, a = a, b = b, p = p,
@@ -252,7 +254,7 @@ blast_select <- function(
       X_A_bar <- X[ind.ni, , drop = FALSE]
       y_A_bar <- y[ind.ni]
       Q_A_bar <- crossprod(X_A_bar)
-      w0_samp <- exact_horseshoe_gibbs_step(
+      w0_samp <- exact_horseshoe_step(
         X_A_bar, y_A_bar,
         eta = eta_A_bar, xi = xi_A_bar, Q = Q_A_bar,
         w = w, s = s, a = a, b = b, p = p,
@@ -281,12 +283,11 @@ blast_select <- function(
     Sigma_delta <- (1 / xi_0)     * diag(1 / eta_0)
     Sigma_A_bar <- (1 / xi_A_bar) * diag(1 / eta_A_bar)
 
-    ## (7) Update gamma one coordinate at a time
+    ## (7) Metopolis update for Gamma
     for (k in 1:K) {
       gamma_tmp <- gamma
       gamma_old <- gamma[k]
       inds.tmp <- set_data_inds(gamma_tmp, n.vec)
-
       log_p0 <- approx_marginal_likelihood(
         y0 = y_0, yA = y[inds.tmp$ind.kA], yAb = y[inds.tmp$ind.ni],
         X0 = X_0, XA = X[inds.tmp$ind.kA, , drop = FALSE], XAb = X[inds.tmp$ind.ni, , drop = FALSE],
@@ -294,7 +295,6 @@ blast_select <- function(
       )
       # proposal ---------------------------
       gamma_tmp[k] <- abs(gamma[k] - 1)
-      #
       aux_num_ind.kA <- as.logical(gamma_tmp)
       aux_num_ind.ni <- !aux_num_ind.kA
       precomp_XtX_A     <- precomp$list_XtX[aux_num_ind.kA]
@@ -310,7 +310,6 @@ blast_select <- function(
         yA_prop <- y[inds.tmp$ind.kA]
         XA_prop <- X[inds.tmp$ind.kA, , drop = FALSE]
       }
-
       log_p1 <- approx_marginal_likelihood(
         y0 = y_0, yA = y[inds.tmp$ind.kA], yAb = y[inds.tmp$ind.ni],
         X0 = X_0, XA = X[inds.tmp$ind.kA, , drop = FALSE], XAb = X[inds.tmp$ind.ni, , drop = FALSE],
@@ -324,15 +323,9 @@ blast_select <- function(
       }
       # MH Acceptance -----------------------------
       if(log(runif(1)) < ratio) gamma[k] <- gamma_tmp[k]
-
-
-
-
     }
 
-    # END DT Edits ------------------------------
-
-    if(i %% 100 == 0){
+    if(print_progress == TRUE & i %% 100 == 0){
       cat("Iter:", i, "\n")
     }
     ## Save iteration-level outputs

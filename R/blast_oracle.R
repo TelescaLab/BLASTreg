@@ -125,7 +125,7 @@ blast_oracle <- function(
   if (!has_sources) {
     message("BLAST (Oracle, Gaussian): No source studies provided. Target-only regression.")
     for (i in seq_len(nmc)) {
-      samp <- exact_horseshoe_gibbs_step(
+      samp <- exact_horseshoe_step(
         X = X0, y = y0,
         eta = eta_0, xi = xi_0, Q = Q,
         w = w, s = s, a = a, b = b, p = p,
@@ -171,7 +171,7 @@ blast_oracle <- function(
 
     ## (1) Shared/source coefficients wk | delta
     y_new <- c(y0 - drop(X0 %*% delta_new), yA)
-    wk_samp <- exact_horseshoe_gibbs_step(
+    wk_samp <- exact_horseshoe_step(
       X = X, y = y_new,
       eta = eta_k, xi = xi_k, Q = Q,
       w = w, s = s, a = a, b = b, p = p,
@@ -185,7 +185,7 @@ blast_oracle <- function(
 
     ## (2) Target delta | wk_new
     # If enforcing stronger shrinkage on contrasts: truncate log-proposal at log(xi_k)
-    delta_samp <- exact_horseshoe_gibbs_step(
+    delta_samp <- exact_horseshoe_step(
       X = X0, y = y0 - drop(X0 %*% wk_new),
       eta = eta_0, xi = xi_0, Q = Q0,
       w = w, s = s, a = a, b = b, p = p,
