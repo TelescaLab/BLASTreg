@@ -88,11 +88,7 @@ double log_marginal_likelihood(
   M_Ab = 0.5 * (M_Ab + M_Ab.t());
   double quad_Ab = dot(yAb, yAb) - as_scalar(Xty_Ab.t() * solve(M_Ab, Xty_Ab));
   double loglik_Ab =
-    -0.5 * nAb * log2pi
-    //-0.5 * nAb * std::log(sigma2_Ab)
-    //-0.5 * p * std::log(sigma2_Ab)
-    + lgamma(0.5 * (nAb + p - 1))
-    -0.5 * sum(log(d_Ab + jitter))
+    lgamma(0.5 * (nAb + p - 1))
     -0.5 * safe_log_det(M_Ab, "M_Ab")
     -0.5 * (nAb + p -1) * log(0.5 * (quad_Ab + 1));
 
@@ -107,12 +103,6 @@ double log_marginal_likelihood(
 
 
     double term1 =
-      -0.5 * (nA) * log2pi
-      //-0.5 * dot(yA, yA) / sigma2_A
-      //-0.5 * p * std::log(sigma2_A)
-      //-0.5 * p * std::log(sigma2_0)
-      -0.5 * sum(log(d_A + jitter))
-      -0.5 * sum(log(d_delta + jitter))
       -0.5 * safe_log_det(M_A, "M_A")
       -0.5 * safe_log_det(M_delta, "M_delta");
 
@@ -122,23 +112,8 @@ double log_marginal_likelihood(
         + dot(y0, y0) - as_scalar(X0_y0.t() * M_A_X0_y0) - 2 * as_scalar(Xty_A.t() * M_A_X0_y0);
       arma::vec b0 = X0_y0 - X0_X0_t * M_A_XA_yA - X0_X0_t * M_A_X0_y0;
       double quad_A_bMb = quad_A - as_scalar(b0.t() * M_delta_inv * b0);
-      double loglik_A = lgamma(0.5 * (n0 + nA + 4*p -1)) - 0.5 * (n0 + nA + 4*p -1) * log(0.5 * (quad_A_bMb + 1));
+      double loglik_A = lgamma(0.5 * (n0 + nA + 2*p -1)) - 0.5 * (n0 + nA + 2*p -1) * log(0.5 * (quad_A_bMb + 1));
 
-
-      // double term2 = 0.5 / (sigma2_A * sigma2_A) * as_scalar(Xty_A.t() * solve(M_A, Xty_A));
-      // double term3 = -0.5 * dot(y0, y0) + 0.5 / (sigma2_0 * sigma2_0) * as_scalar(X0_y0.t() * solve(M_A, X0_y0));
-      // double term4 = 1 / (sigma2_A * sigma2_0) * as_scalar(Xty_A.t() * solve(M_A, X0_y0));
-
-
-
-
-
-      //arma::mat temp = solve(M_A, diff);
-      //arma::mat inner = XtX_0_scaled * solve(M_delta, XtX_0_scaled * temp);
-      // arma::rowvec temp = Xty_sum_scaled.t() * M_A_X0_X0_t;
-      // double quad_term = as_scalar(temp * M_delta_inv * temp.t());
-      // double term5 = 0.5 * as_scalar(Xty_0_scaled.t() * M_delta_inv * Xty_0_scaled) - 0.5 * quad_term;
-      // double logdet_Mdelta = safe_log_det1(M_delta, "M_delta");
 
       return loglik_Ab + term1 + loglik_A;
 }
