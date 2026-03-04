@@ -2,10 +2,10 @@
 
 useDynLib(BLASTreg, .registration = TRUE)
 importFrom(Rcpp, evalCpp)
+S3method(rep,col)
 export(approx_marginal_likelihood)
 export(blast_oracle)
 export(blast_select)
-export(blast_select_DT)
 export(eb_em_max)
 export(exact_horseshoe_step)
 export(simulate_multistudy_regression)

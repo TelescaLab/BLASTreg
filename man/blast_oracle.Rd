@@ -31,9 +31,9 @@ blast_oracle(
 
 \item{burn}{Integer burn-in.}
 
-\item{iter}{Integer saved draws after burn (plus optional EB iterations).}
+\item{iter}{Integer saved draws after burn.}
 
-\item{a, b, s, w}{Horseshoe / sampler hyperparams (as in your helpers).}
+\item{a, b, s, w}{Horseshoe / sampler hyperparams.}
 
 \item{tau}{Global scale (initial); xi = tau^{-2}.}
 

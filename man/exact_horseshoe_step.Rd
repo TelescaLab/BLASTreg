@@ -68,8 +68,8 @@ A list with:
 }
 }
 \description{
-Performs a single Gibbs-sampling sweep for the \strong{horseshoe} prior in a
-Gaussian (or latent-Gaussian) linear model. The step updates:
+Performs a single sampling sweep for the \strong{horseshoe} prior in a
+Gaussian linear model. The step updates:
 (i) the global shrinkage \eqn{\xi} via a random walk on \eqn{\log \xi},
 (ii) the regression coefficients \eqn{\beta}, and
 (iii) the local shrinkage parameters \eqn{\eta_j}.

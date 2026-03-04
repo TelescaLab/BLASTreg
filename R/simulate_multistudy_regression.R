@@ -144,6 +144,7 @@ simulate_multistudy_regression <- function(p, s, M, size.A0, n.vec, sig.beta, si
   return(list(X = X, y = y, coef.all = coef.all, X.test = X.test, y.test = y.test, n.vec = n.vec))
 }
 
+#'@export
 rep.col<-function(x,n){
   matrix(rep(x,each=n), ncol=n, byrow=TRUE)
 }

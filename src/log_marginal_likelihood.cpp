@@ -33,6 +33,7 @@ arma::vec add_vectors(const List& vecs) {
   return sum;
 }
 
+// Optional cpp function to compute log marginal likelihood
 // [[Rcpp::export]]
 double log_marginal_likelihood(
     const arma::vec& y0,

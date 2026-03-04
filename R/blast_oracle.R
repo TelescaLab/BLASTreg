@@ -8,8 +8,8 @@
 #' @param y Outcome vector (target stacked over sources).
 #' @param n.vec Integer vector: sizes c(n0, n1, ..., nK). n0 = target size.
 #' @param burn Integer burn-in.
-#' @param iter Integer saved draws after burn (plus optional EB iterations).
-#' @param a,b,s,w Horseshoe / sampler hyperparams (as in your helpers).
+#' @param iter Integer saved draws after burn.
+#' @param a,b,s,w Horseshoe / sampler hyperparams.
 #' @param tau Global scale (initial); xi = tau^{-2}.
 #' @param sigma2 Error variance (Gaussian).
 #' @param alpha Credible interval level.

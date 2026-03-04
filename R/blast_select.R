@@ -30,9 +30,6 @@
 #' @param gamma_init Optional binary vector of length `K` giving the initial
 #'   informative-set indicator; if `NULL`, a candidate set is chosen via
 #'   `construct_candidate_set()`.
-#' @param temp_scale Numeric temperature multiplier for \eqn{\gamma}-update
-#'   probabilities (values > 1 flatten differences; < 1 sharpen). If `NULL`,
-#'   the function initializes `temp_scale <- 1/p` and enables adaptive tempering.
 #' @param enforce_delta_stronger_shrinkage Logical; if TRUE, the global proposal
 #'   for the target “contrast” block (delta) is lower-truncated at the current
 #'   global scale of the informative/source block, enforcing xi_delta ≥ xi_source.
@@ -42,7 +39,7 @@
 #' A list with posterior summaries and draws:
 #'
 #' - `BetaHat`, `BetaHatMedian`: posterior mean/median of \eqn{\beta}.
-#' - `LeftCI`, `RightCI`: marginal \(100(1-\alpha)\%\) credible bounds.
+#' - `LeftCI`, `RightCI`: marginal \(100(1-alpha)\%\) credible bounds.
 #' - `Sigma2Hat`, `TauHat`, `LambdaHat`: posterior means of \eqn{\sigma^2},
 #'   \eqn{\tau}, and local shrinkage \eqn{\lambda_j}.
 #' - `BetaSamples`, `LambdaSamples`, `TauSamples`, `Sigma2Samples`:
@@ -76,7 +73,6 @@ blast_select <- function(
     s = 0.8, tau = 1, sigma2 = 1, w = 1, alpha = 0.05,
     iterEBstep = 0,
     gamma_init = NULL,
-    temp_scale = NULL,
     enforce_delta_stronger_shrinkage = FALSE,
     print_progress = FALSE
 ) {
@@ -200,12 +196,12 @@ blast_select <- function(
   ## =======================
   for (i in 1:nmc) {
 
-    ## (1) Set indices based on current gamma
+    ## Set indices based on current gamma
     data_inds <- set_data_inds(gamma, n.vec)
     ind.kA <- data_inds$ind.kA
     ind.ni <- data_inds$ind.ni
 
-    ## (2) Update target delta given current wA_new
+    ## Update target delta given current wA_new
     delta_samp <- exact_horseshoe_step(
       X = X_0,
       y = y_0 - X_0 %*% wA_new,
@@ -221,7 +217,7 @@ blast_select <- function(
     sigma2_0  <- delta_samp$new_sigma2
     eta_0     <- delta_samp$new_eta
 
-    ## (3) Update auxiliary coefficients for informative set
+    ## Update auxiliary coefficients for informative set
     if (data_inds$informative) {
       X_A  <- X[ind.kA, , drop = FALSE]
       y_A  <- y[ind.kA]
@@ -249,7 +245,7 @@ blast_select <- function(
     etaA     <- wA_samp$new_eta
     wAout[i, ] <- wA_new
 
-    ## (4) Update auxiliary coefficients for non-informative set
+    ## Update auxiliary coefficients for non-informative set
     if (data_inds$noninformative) {
       X_A_bar <- X[ind.ni, , drop = FALSE]
       y_A_bar <- y[ind.ni]
@@ -274,16 +270,16 @@ blast_select <- function(
 
     w0out[i, ]   <- w0_new
 
-    ## (5) Compose beta and save partial draws
+    ## Compose beta and save partial draws
     deltaout[i, ] <- delta_new
     betaout[i, ]  <- wA_new + delta_new
 
-    ## (6) Diagonal prior terms for marginal-likelihood γ update
+    ## Diagonal prior terms for marginal-likelihood γ update
     Sigma_A     <- (1 / xiA)      * diag(1 / etaA)
     Sigma_delta <- (1 / xi_0)     * diag(1 / eta_0)
     Sigma_A_bar <- (1 / xi_A_bar) * diag(1 / eta_A_bar)
 
-    ## (7) Metopolis update for Gamma
+    ## Metopolis update for Gamma
     for (k in 1:K) {
       gamma_tmp <- gamma
       gamma_old <- gamma[k]

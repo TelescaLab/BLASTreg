@@ -19,7 +19,6 @@ blast_select(
   alpha = 0.05,
   iterEBstep = 0,
   gamma_init = NULL,
-  temp_scale = NULL,
   enforce_delta_stronger_shrinkage = FALSE,
   print_progress = FALSE
 )
@@ -56,10 +55,6 @@ The first entry \code{n0} is the target size; the rest are auxiliary-study sizes
 informative-set indicator; if \code{NULL}, a candidate set is chosen via
 \code{construct_candidate_set()}.}
 
-\item{temp_scale}{Numeric temperature multiplier for \eqn{\gamma}-update
-probabilities (values > 1 flatten differences; < 1 sharpen). If \code{NULL},
-the function initializes \code{temp_scale <- 1/p} and enables adaptive tempering.}
-
 \item{enforce_delta_stronger_shrinkage}{Logical; if TRUE, the global proposal
 for the target “contrast” block (delta) is lower-truncated at the current
 global scale of the informative/source block, enforcing xi_delta ≥ xi_source.}
@@ -70,7 +65,7 @@ global scale of the informative/source block, enforcing xi_delta ≥ xi_source.}
 A list with posterior summaries and draws:
 \itemize{
 \item \code{BetaHat}, \code{BetaHatMedian}: posterior mean/median of \eqn{\beta}.
-\item \code{LeftCI}, \code{RightCI}: marginal \(100(1-\alpha)\\%\) credible bounds.
+\item \code{LeftCI}, \code{RightCI}: marginal \(100(1-alpha)\\%\) credible bounds.
 \item \code{Sigma2Hat}, \code{TauHat}, \code{LambdaHat}: posterior means of \eqn{\sigma^2},
 \eqn{\tau}, and local shrinkage \eqn{\lambda_j}.
 \item \code{BetaSamples}, \code{LambdaSamples}, \code{TauSamples}, \code{Sigma2Samples}:
