@@ -73,15 +73,10 @@ df <- simulate_multistudy_regression(
   contam_pct = 0.01, type = "gaussian"
 )
 
-# --- Construct oracle gamma (all auxiliaries informative) ---
-K <- length(n.vec) - 1
-gamma_oracle <- rep(1L, K)
-
 # --- Fit Oracle BLAST ---
 fit <- blast_oracle(
   X = df$X, y = df$y, n.vec = df$n.vec,
-  gamma = gamma_oracle,
-  burn = 100, iter = 200,  # keep small for quick examples
+  burn = 100, iter = 200,
   a = 1/5, b = 10, s = 0.8,
   tau = 1, sigma2 = 1, w = 1, alpha = 0.05
 )

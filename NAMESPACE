@@ -15,4 +15,3 @@ importFrom(stats,rgamma)
 importFrom(stats,rnorm)
 importFrom(stats,runif)
 importFrom(truncnorm,rtruncnorm)
-
